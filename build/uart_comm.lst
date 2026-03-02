@@ -1,0 +1,1184 @@
+ARM GAS  /tmp/ccomIWdt.s 			page 1
+
+
+   1              		.cpu cortex-m3
+   2              		.arch armv7-m
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"uart_comm.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.file 1 "Core/Src/uart_comm.c"
+  18              		.section	.text.process_rx_bytes,"ax",%progbits
+  19              		.align	1
+  20              		.syntax unified
+  21              		.thumb
+  22              		.thumb_func
+  24              	process_rx_bytes:
+  25              	.LVL0:
+  26              	.LFB70:
+   1:Core/Src/uart_comm.c **** /**
+   2:Core/Src/uart_comm.c ****  * @file    uart_comm.c
+   3:Core/Src/uart_comm.c ****  * @brief   Communication module — USB CDC (Virtual COM Port)
+   4:Core/Src/uart_comm.c ****  *
+   5:Core/Src/uart_comm.c ****  * Protocol:
+   6:Core/Src/uart_comm.c ****  *   RX: "$CMD,linear,angular\n"  → cmd_vel
+   7:Core/Src/uart_comm.c ****  *       "$ROT,angle,speed\n"     → rotate in place
+   8:Core/Src/uart_comm.c ****  *       "$FWD,speed\n"           → go straight
+   9:Core/Src/uart_comm.c ****  *       "$STP\n"                 → stop
+  10:Core/Src/uart_comm.c ****  *       "$QRY\n"                 → request odometry
+  11:Core/Src/uart_comm.c ****  *       "$PID,Kp,Ki,Kd\n"       → tune heading PID
+  12:Core/Src/uart_comm.c ****  *
+  13:Core/Src/uart_comm.c ****  *   TX: "$ODO,heading,enc_l,enc_r,spd_l,spd_r\n"
+  14:Core/Src/uart_comm.c ****  */
+  15:Core/Src/uart_comm.c **** #include "uart_comm.h"
+  16:Core/Src/uart_comm.c **** #include "main.h"
+  17:Core/Src/uart_comm.c **** #include "usbd_cdc_if.h"
+  18:Core/Src/uart_comm.c **** #include <stdio.h>
+  19:Core/Src/uart_comm.c **** #include <stdlib.h>
+  20:Core/Src/uart_comm.c **** #include <string.h>
+  21:Core/Src/uart_comm.c **** 
+  22:Core/Src/uart_comm.c **** /* RX line buffer */
+  23:Core/Src/uart_comm.c **** #define RX_LINE_SIZE 128
+  24:Core/Src/uart_comm.c **** static char rx_line[RX_LINE_SIZE];
+  25:Core/Src/uart_comm.c **** static uint8_t rx_line_idx = 0;
+  26:Core/Src/uart_comm.c **** static volatile uint8_t line_ready = 0;
+  27:Core/Src/uart_comm.c **** 
+  28:Core/Src/uart_comm.c **** /* TX buffer */
+  29:Core/Src/uart_comm.c **** #define TX_BUF_SIZE 128
+  30:Core/Src/uart_comm.c **** static char tx_buf[TX_BUF_SIZE];
+  31:Core/Src/uart_comm.c **** 
+  32:Core/Src/uart_comm.c **** /* ========================== Private helpers ============================= */
+ARM GAS  /tmp/ccomIWdt.s 			page 2
+
+
+  33:Core/Src/uart_comm.c **** 
+  34:Core/Src/uart_comm.c **** static float parse_float(const char **p) {
+  35:Core/Src/uart_comm.c ****   while (**p == ',' || **p == ' ')
+  36:Core/Src/uart_comm.c ****     (*p)++;
+  37:Core/Src/uart_comm.c ****   return strtof(*p, (char **)p);
+  38:Core/Src/uart_comm.c **** }
+  39:Core/Src/uart_comm.c **** 
+  40:Core/Src/uart_comm.c **** /* Process raw USB CDC received bytes into lines */
+  41:Core/Src/uart_comm.c **** static void process_rx_bytes(uint8_t *data, uint32_t len) {
+  27              		.loc 1 41 59 view -0
+  28              		.cfi_startproc
+  29              		@ args = 0, pretend = 0, frame = 0
+  30              		@ frame_needed = 0, uses_anonymous_args = 0
+  42:Core/Src/uart_comm.c ****   for (uint32_t i = 0; i < len; i++) {
+  31              		.loc 1 42 3 view .LVU1
+  32              	.LBB2:
+  33              		.loc 1 42 8 view .LVU2
+  34              		.loc 1 42 17 is_stmt 0 view .LVU3
+  35 0000 0023     		movs	r3, #0
+  36              	.LVL1:
+  37              		.loc 1 42 26 is_stmt 1 discriminator 1 view .LVU4
+  38 0002 8B42     		cmp	r3, r1
+  39 0004 23D2     		bcs	.L10
+  40              	.LBE2:
+  41:Core/Src/uart_comm.c ****   for (uint32_t i = 0; i < len; i++) {
+  41              		.loc 1 41 59 is_stmt 0 view .LVU5
+  42 0006 10B5     		push	{r4, lr}
+  43              	.LCFI0:
+  44              		.cfi_def_cfa_offset 8
+  45              		.cfi_offset 4, -8
+  46              		.cfi_offset 14, -4
+  47 0008 0DE0     		b	.L6
+  48              	.LVL2:
+  49              	.L3:
+  50              	.LBB5:
+  51              	.LBB3:
+  43:Core/Src/uart_comm.c ****     char c = (char)data[i];
+  44:Core/Src/uart_comm.c ****     if (c == '\n' || c == '\r') {
+  45:Core/Src/uart_comm.c ****       if (rx_line_idx > 0) {
+  52              		.loc 1 45 7 is_stmt 1 view .LVU6
+  53              		.loc 1 45 23 is_stmt 0 view .LVU7
+  54 000a 114A     		ldr	r2, .L12
+  55              	.LVL3:
+  56              		.loc 1 45 23 view .LVU8
+  57 000c 1278     		ldrb	r2, [r2]	@ zero_extendqisi2
+  58              		.loc 1 45 10 view .LVU9
+  59 000e 3AB1     		cbz	r2, .L5
+  46:Core/Src/uart_comm.c ****         rx_line[rx_line_idx] = '\0';
+  60              		.loc 1 46 9 is_stmt 1 view .LVU10
+  61              		.loc 1 46 30 is_stmt 0 view .LVU11
+  62 0010 104C     		ldr	r4, .L12+4
+  63 0012 4FF0000C 		mov	ip, #0
+  64 0016 04F802C0 		strb	ip, [r4, r2]
+  65              	.LVL4:
+  47:Core/Src/uart_comm.c ****         line_ready = 1;
+  66              		.loc 1 47 9 is_stmt 1 view .LVU12
+  67              		.loc 1 47 20 is_stmt 0 view .LVU13
+ARM GAS  /tmp/ccomIWdt.s 			page 3
+
+
+  68 001a 0F4A     		ldr	r2, .L12+8
+  69 001c 0124     		movs	r4, #1
+  70 001e 1470     		strb	r4, [r2]
+  71              	.L5:
+  72              	.LBE3:
+  42:Core/Src/uart_comm.c ****     char c = (char)data[i];
+  73              		.loc 1 42 34 is_stmt 1 discriminator 2 view .LVU14
+  74 0020 0133     		adds	r3, r3, #1
+  75              	.LVL5:
+  42:Core/Src/uart_comm.c ****     char c = (char)data[i];
+  76              		.loc 1 42 26 discriminator 1 view .LVU15
+  77 0022 8B42     		cmp	r3, r1
+  78 0024 12D2     		bcs	.L11
+  79              	.LVL6:
+  80              	.L6:
+  81              	.LBB4:
+  43:Core/Src/uart_comm.c ****     if (c == '\n' || c == '\r') {
+  82              		.loc 1 43 5 view .LVU16
+  43:Core/Src/uart_comm.c ****     if (c == '\n' || c == '\r') {
+  83              		.loc 1 43 10 is_stmt 0 view .LVU17
+  84 0026 C25C     		ldrb	r2, [r0, r3]	@ zero_extendqisi2
+  85              	.LVL7:
+  44:Core/Src/uart_comm.c ****       if (rx_line_idx > 0) {
+  86              		.loc 1 44 5 is_stmt 1 view .LVU18
+  44:Core/Src/uart_comm.c ****       if (rx_line_idx > 0) {
+  87              		.loc 1 44 8 is_stmt 0 view .LVU19
+  88 0028 0A2A     		cmp	r2, #10
+  89 002a EED0     		beq	.L3
+  44:Core/Src/uart_comm.c ****       if (rx_line_idx > 0) {
+  90              		.loc 1 44 19 discriminator 1 view .LVU20
+  91 002c 0D2A     		cmp	r2, #13
+  92 002e ECD0     		beq	.L3
+  48:Core/Src/uart_comm.c ****       }
+  49:Core/Src/uart_comm.c ****     } else if (rx_line_idx < RX_LINE_SIZE - 1) {
+  93              		.loc 1 49 12 is_stmt 1 view .LVU21
+  94              		.loc 1 49 28 is_stmt 0 view .LVU22
+  95 0030 074C     		ldr	r4, .L12
+  96 0032 94F800C0 		ldrb	ip, [r4]	@ zero_extendqisi2
+  97              		.loc 1 49 15 view .LVU23
+  98 0036 BCF17E0F 		cmp	ip, #126
+  99 003a F1D8     		bhi	.L5
+  50:Core/Src/uart_comm.c ****       rx_line[rx_line_idx++] = c;
+ 100              		.loc 1 50 7 is_stmt 1 view .LVU24
+ 101              		.loc 1 50 26 is_stmt 0 view .LVU25
+ 102 003c 0CF1010E 		add	lr, ip, #1
+ 103 0040 84F800E0 		strb	lr, [r4]
+ 104              		.loc 1 50 30 view .LVU26
+ 105 0044 034C     		ldr	r4, .L12+4
+ 106 0046 04F80C20 		strb	r2, [r4, ip]
+ 107 004a E9E7     		b	.L5
+ 108              	.LVL8:
+ 109              	.L11:
+ 110              		.loc 1 50 30 view .LVU27
+ 111              	.LBE4:
+ 112              	.LBE5:
+  51:Core/Src/uart_comm.c ****     }
+  52:Core/Src/uart_comm.c ****   }
+ARM GAS  /tmp/ccomIWdt.s 			page 4
+
+
+  53:Core/Src/uart_comm.c **** }
+ 113              		.loc 1 53 1 view .LVU28
+ 114 004c 10BD     		pop	{r4, pc}
+ 115              	.LVL9:
+ 116              	.L10:
+ 117              	.LCFI1:
+ 118              		.cfi_def_cfa_offset 0
+ 119              		.cfi_restore 4
+ 120              		.cfi_restore 14
+ 121              		.loc 1 53 1 view .LVU29
+ 122 004e 7047     		bx	lr
+ 123              	.L13:
+ 124              		.align	2
+ 125              	.L12:
+ 126 0050 00000000 		.word	rx_line_idx
+ 127 0054 00000000 		.word	rx_line
+ 128 0058 00000000 		.word	line_ready
+ 129              		.cfi_endproc
+ 130              	.LFE70:
+ 132              		.section	.text.parse_float,"ax",%progbits
+ 133              		.align	1
+ 134              		.syntax unified
+ 135              		.thumb
+ 136              		.thumb_func
+ 138              	parse_float:
+ 139              	.LVL10:
+ 140              	.LFB69:
+  34:Core/Src/uart_comm.c ****   while (**p == ',' || **p == ' ')
+ 141              		.loc 1 34 42 is_stmt 1 view -0
+ 142              		.cfi_startproc
+ 143              		@ args = 0, pretend = 0, frame = 0
+ 144              		@ frame_needed = 0, uses_anonymous_args = 0
+  34:Core/Src/uart_comm.c ****   while (**p == ',' || **p == ' ')
+ 145              		.loc 1 34 42 is_stmt 0 view .LVU31
+ 146 0000 08B5     		push	{r3, lr}
+ 147              	.LCFI2:
+ 148              		.cfi_def_cfa_offset 8
+ 149              		.cfi_offset 3, -8
+ 150              		.cfi_offset 14, -4
+ 151 0002 0146     		mov	r1, r0
+  35:Core/Src/uart_comm.c ****     (*p)++;
+ 152              		.loc 1 35 3 is_stmt 1 view .LVU32
+  35:Core/Src/uart_comm.c ****     (*p)++;
+ 153              		.loc 1 35 9 is_stmt 0 view .LVU33
+ 154 0004 01E0     		b	.L15
+ 155              	.LVL11:
+ 156              	.L16:
+  36:Core/Src/uart_comm.c ****   return strtof(*p, (char **)p);
+ 157              		.loc 1 36 5 is_stmt 1 view .LVU34
+  36:Core/Src/uart_comm.c ****   return strtof(*p, (char **)p);
+ 158              		.loc 1 36 9 is_stmt 0 view .LVU35
+ 159 0006 0130     		adds	r0, r0, #1
+ 160 0008 0860     		str	r0, [r1]
+ 161              	.L15:
+  35:Core/Src/uart_comm.c ****     (*p)++;
+ 162              		.loc 1 35 21 is_stmt 1 view .LVU36
+  35:Core/Src/uart_comm.c ****     (*p)++;
+ARM GAS  /tmp/ccomIWdt.s 			page 5
+
+
+ 163              		.loc 1 35 11 is_stmt 0 view .LVU37
+ 164 000a 0868     		ldr	r0, [r1]
+  35:Core/Src/uart_comm.c ****     (*p)++;
+ 165              		.loc 1 35 10 view .LVU38
+ 166 000c 0378     		ldrb	r3, [r0]	@ zero_extendqisi2
+  35:Core/Src/uart_comm.c ****     (*p)++;
+ 167              		.loc 1 35 21 view .LVU39
+ 168 000e 2C2B     		cmp	r3, #44
+ 169 0010 F9D0     		beq	.L16
+  35:Core/Src/uart_comm.c ****     (*p)++;
+ 170              		.loc 1 35 21 discriminator 1 view .LVU40
+ 171 0012 202B     		cmp	r3, #32
+ 172 0014 F7D0     		beq	.L16
+  37:Core/Src/uart_comm.c **** }
+ 173              		.loc 1 37 3 is_stmt 1 view .LVU41
+  37:Core/Src/uart_comm.c **** }
+ 174              		.loc 1 37 10 is_stmt 0 view .LVU42
+ 175 0016 FFF7FEFF 		bl	strtof
+ 176              	.LVL12:
+  38:Core/Src/uart_comm.c **** 
+ 177              		.loc 1 38 1 view .LVU43
+ 178 001a 08BD     		pop	{r3, pc}
+ 179              		.cfi_endproc
+ 180              	.LFE69:
+ 182              		.section	.text.UartComm_Init,"ax",%progbits
+ 183              		.align	1
+ 184              		.global	UartComm_Init
+ 185              		.syntax unified
+ 186              		.thumb
+ 187              		.thumb_func
+ 189              	UartComm_Init:
+ 190              	.LFB71:
+  54:Core/Src/uart_comm.c **** 
+  55:Core/Src/uart_comm.c **** /* ========================== Init ======================================== */
+  56:Core/Src/uart_comm.c **** 
+  57:Core/Src/uart_comm.c **** void UartComm_Init(void) {
+ 191              		.loc 1 57 26 is_stmt 1 view -0
+ 192              		.cfi_startproc
+ 193              		@ args = 0, pretend = 0, frame = 0
+ 194              		@ frame_needed = 0, uses_anonymous_args = 0
+ 195              		@ link register save eliminated.
+  58:Core/Src/uart_comm.c ****   /* USB CDC is initialized in main.c via MX_USB_DEVICE_Init() */
+  59:Core/Src/uart_comm.c ****   rx_line_idx = 0;
+ 196              		.loc 1 59 3 view .LVU45
+ 197              		.loc 1 59 15 is_stmt 0 view .LVU46
+ 198 0000 0023     		movs	r3, #0
+ 199 0002 024A     		ldr	r2, .L19
+ 200 0004 1370     		strb	r3, [r2]
+  60:Core/Src/uart_comm.c ****   line_ready = 0;
+ 201              		.loc 1 60 3 is_stmt 1 view .LVU47
+ 202              		.loc 1 60 14 is_stmt 0 view .LVU48
+ 203 0006 024A     		ldr	r2, .L19+4
+ 204 0008 1370     		strb	r3, [r2]
+  61:Core/Src/uart_comm.c **** }
+ 205              		.loc 1 61 1 view .LVU49
+ 206 000a 7047     		bx	lr
+ 207              	.L20:
+ARM GAS  /tmp/ccomIWdt.s 			page 6
+
+
+ 208              		.align	2
+ 209              	.L19:
+ 210 000c 00000000 		.word	rx_line_idx
+ 211 0010 00000000 		.word	line_ready
+ 212              		.cfi_endproc
+ 213              	.LFE71:
+ 215              		.section	.rodata.UartComm_Process.str1.4,"aMS",%progbits,1
+ 216              		.align	2
+ 217              	.LC0:
+ 218 0000 24434D44 		.ascii	"$CMD\000"
+ 218      00
+ 219 0005 000000   		.align	2
+ 220              	.LC1:
+ 221 0008 24524F54 		.ascii	"$ROT\000"
+ 221      00
+ 222 000d 000000   		.align	2
+ 223              	.LC2:
+ 224 0010 24465744 		.ascii	"$FWD\000"
+ 224      00
+ 225 0015 000000   		.align	2
+ 226              	.LC3:
+ 227 0018 24535450 		.ascii	"$STP\000"
+ 227      00
+ 228 001d 000000   		.align	2
+ 229              	.LC4:
+ 230 0020 24515259 		.ascii	"$QRY\000"
+ 230      00
+ 231 0025 000000   		.align	2
+ 232              	.LC5:
+ 233 0028 24504944 		.ascii	"$PID\000"
+ 233      00
+ 234 002d 000000   		.align	2
+ 235              	.LC6:
+ 236 0030 24545354 		.ascii	"$TST\000"
+ 236      00
+ 237 0035 000000   		.align	2
+ 238              	.LC7:
+ 239 0038 24444247 		.ascii	"$DBG\000"
+ 239      00
+ 240 003d 000000   		.align	2
+ 241              	.LC8:
+ 242 0040 24424941 		.ascii	"$BIAS\000"
+ 242      5300
+ 243 0046 0000     		.align	2
+ 244              	.LC9:
+ 245 0048 24535044 		.ascii	"$SPD\000"
+ 245      00
+ 246              		.section	.text.UartComm_Process,"ax",%progbits
+ 247              		.align	1
+ 248              		.global	UartComm_Process
+ 249              		.syntax unified
+ 250              		.thumb
+ 251              		.thumb_func
+ 253              	UartComm_Process:
+ 254              	.LVL13:
+ 255              	.LFB72:
+  62:Core/Src/uart_comm.c **** 
+ARM GAS  /tmp/ccomIWdt.s 			page 7
+
+
+  63:Core/Src/uart_comm.c **** /* ========================== Process ===================================== */
+  64:Core/Src/uart_comm.c **** 
+  65:Core/Src/uart_comm.c **** UartCmd_t UartComm_Process(void) {
+ 256              		.loc 1 65 34 is_stmt 1 view -0
+ 257              		.cfi_startproc
+ 258              		@ args = 0, pretend = 0, frame = 16
+ 259              		@ frame_needed = 0, uses_anonymous_args = 0
+ 260              		.loc 1 65 34 is_stmt 0 view .LVU51
+ 261 0000 30B5     		push	{r4, r5, lr}
+ 262              	.LCFI3:
+ 263              		.cfi_def_cfa_offset 12
+ 264              		.cfi_offset 4, -12
+ 265              		.cfi_offset 5, -8
+ 266              		.cfi_offset 14, -4
+ 267 0002 85B0     		sub	sp, sp, #20
+ 268              	.LCFI4:
+ 269              		.cfi_def_cfa_offset 32
+ 270 0004 0446     		mov	r4, r0
+  66:Core/Src/uart_comm.c ****   UartCmd_t cmd = {CMD_NONE, 0, 0, 0};
+ 271              		.loc 1 66 3 is_stmt 1 view .LVU52
+ 272              		.loc 1 66 13 is_stmt 0 view .LVU53
+ 273 0006 0023     		movs	r3, #0
+ 274 0008 0360     		str	r3, [r0]
+ 275 000a 4360     		str	r3, [r0, #4]
+ 276 000c 8360     		str	r3, [r0, #8]
+ 277 000e C360     		str	r3, [r0, #12]
+  67:Core/Src/uart_comm.c **** 
+  68:Core/Src/uart_comm.c ****   /* Check for new USB CDC data */
+  69:Core/Src/uart_comm.c ****   uint8_t *rx_data;
+ 278              		.loc 1 69 3 is_stmt 1 view .LVU54
+  70:Core/Src/uart_comm.c ****   uint32_t rx_len;
+ 279              		.loc 1 70 3 view .LVU55
+  71:Core/Src/uart_comm.c ****   if (CDC_GetRxData(&rx_data, &rx_len)) {
+ 280              		.loc 1 71 3 view .LVU56
+ 281              		.loc 1 71 7 is_stmt 0 view .LVU57
+ 282 0010 02A9     		add	r1, sp, #8
+ 283 0012 03A8     		add	r0, sp, #12
+ 284              	.LVL14:
+ 285              		.loc 1 71 7 view .LVU58
+ 286 0014 FFF7FEFF 		bl	CDC_GetRxData
+ 287              	.LVL15:
+ 288              		.loc 1 71 6 discriminator 1 view .LVU59
+ 289 0018 18BB     		cbnz	r0, .L35
+ 290              	.L22:
+  72:Core/Src/uart_comm.c ****     process_rx_bytes(rx_data, rx_len);
+  73:Core/Src/uart_comm.c ****   }
+  74:Core/Src/uart_comm.c **** 
+  75:Core/Src/uart_comm.c ****   /* Check if a complete line is ready */
+  76:Core/Src/uart_comm.c ****   if (!line_ready)
+ 291              		.loc 1 76 3 is_stmt 1 view .LVU60
+ 292              		.loc 1 76 7 is_stmt 0 view .LVU61
+ 293 001a 5F4B     		ldr	r3, .L42
+ 294 001c 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 295              		.loc 1 76 6 view .LVU62
+ 296 001e 002B     		cmp	r3, #0
+ 297 0020 34D0     		beq	.L21
+  77:Core/Src/uart_comm.c ****     return cmd;
+ARM GAS  /tmp/ccomIWdt.s 			page 8
+
+
+  78:Core/Src/uart_comm.c **** 
+  79:Core/Src/uart_comm.c ****   line_ready = 0;
+ 298              		.loc 1 79 3 is_stmt 1 view .LVU63
+ 299              		.loc 1 79 14 is_stmt 0 view .LVU64
+ 300 0022 5D4B     		ldr	r3, .L42
+ 301 0024 0022     		movs	r2, #0
+ 302 0026 1A70     		strb	r2, [r3]
+  80:Core/Src/uart_comm.c **** 
+  81:Core/Src/uart_comm.c ****   /* Parse command */
+  82:Core/Src/uart_comm.c ****   if (strncmp(rx_line, "$CMD", 4) == 0) {
+ 303              		.loc 1 82 3 is_stmt 1 view .LVU65
+ 304              		.loc 1 82 7 is_stmt 0 view .LVU66
+ 305 0028 0422     		movs	r2, #4
+ 306 002a 5C49     		ldr	r1, .L42+4
+ 307 002c 5C48     		ldr	r0, .L42+8
+ 308 002e FFF7FEFF 		bl	strncmp
+ 309              	.LVL16:
+ 310              		.loc 1 82 6 discriminator 1 view .LVU67
+ 311 0032 D8B1     		cbz	r0, .L36
+  83:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+  84:Core/Src/uart_comm.c ****     cmd.type = CMD_VEL;
+  85:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+  86:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+  87:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$ROT", 4) == 0) {
+ 312              		.loc 1 87 10 is_stmt 1 view .LVU68
+ 313              		.loc 1 87 14 is_stmt 0 view .LVU69
+ 314 0034 0422     		movs	r2, #4
+ 315 0036 5B49     		ldr	r1, .L42+12
+ 316 0038 5948     		ldr	r0, .L42+8
+ 317 003a FFF7FEFF 		bl	strncmp
+ 318              	.LVL17:
+ 319              		.loc 1 87 13 discriminator 1 view .LVU70
+ 320 003e 40B3     		cbz	r0, .L37
+  88:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+  89:Core/Src/uart_comm.c ****     cmd.type = CMD_ROTATE;
+  90:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+  91:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+  92:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$FWD", 4) == 0) {
+ 321              		.loc 1 92 10 is_stmt 1 view .LVU71
+ 322              		.loc 1 92 14 is_stmt 0 view .LVU72
+ 323 0040 0422     		movs	r2, #4
+ 324 0042 5949     		ldr	r1, .L42+16
+ 325 0044 5648     		ldr	r0, .L42+8
+ 326 0046 FFF7FEFF 		bl	strncmp
+ 327              	.LVL18:
+ 328              		.loc 1 92 13 discriminator 1 view .LVU73
+ 329 004a 0028     		cmp	r0, #0
+ 330 004c 2FD0     		beq	.L38
+  93:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+  94:Core/Src/uart_comm.c ****     cmd.type = CMD_STRAIGHT;
+  95:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+  96:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$STP", 4) == 0) {
+ 331              		.loc 1 96 10 is_stmt 1 view .LVU74
+ 332              		.loc 1 96 14 is_stmt 0 view .LVU75
+ 333 004e 0422     		movs	r2, #4
+ 334 0050 5649     		ldr	r1, .L42+20
+ 335 0052 5348     		ldr	r0, .L42+8
+ARM GAS  /tmp/ccomIWdt.s 			page 9
+
+
+ 336 0054 FFF7FEFF 		bl	strncmp
+ 337              	.LVL19:
+ 338              		.loc 1 96 13 discriminator 1 view .LVU76
+ 339 0058 0028     		cmp	r0, #0
+ 340 005a 31D1     		bne	.L28
+  97:Core/Src/uart_comm.c ****     cmd.type = CMD_STOP;
+ 341              		.loc 1 97 5 is_stmt 1 view .LVU77
+ 342              		.loc 1 97 14 is_stmt 0 view .LVU78
+ 343 005c 0423     		movs	r3, #4
+ 344 005e 2370     		strb	r3, [r4]
+ 345 0060 11E0     		b	.L25
+ 346              	.L35:
+  72:Core/Src/uart_comm.c ****   }
+ 347              		.loc 1 72 5 is_stmt 1 view .LVU79
+ 348 0062 0299     		ldr	r1, [sp, #8]
+ 349 0064 0398     		ldr	r0, [sp, #12]
+ 350 0066 FFF7FEFF 		bl	process_rx_bytes
+ 351              	.LVL20:
+ 352 006a D6E7     		b	.L22
+ 353              	.L36:
+ 354              	.LBB6:
+  83:Core/Src/uart_comm.c ****     cmd.type = CMD_VEL;
+ 355              		.loc 1 83 5 view .LVU80
+  83:Core/Src/uart_comm.c ****     cmd.type = CMD_VEL;
+ 356              		.loc 1 83 17 is_stmt 0 view .LVU81
+ 357 006c 504B     		ldr	r3, .L42+24
+ 358 006e 0193     		str	r3, [sp, #4]
+  84:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+ 359              		.loc 1 84 5 is_stmt 1 view .LVU82
+  84:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+ 360              		.loc 1 84 14 is_stmt 0 view .LVU83
+ 361 0070 0123     		movs	r3, #1
+ 362 0072 2370     		strb	r3, [r4]
+  85:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 363              		.loc 1 85 5 is_stmt 1 view .LVU84
+  85:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 364              		.loc 1 85 18 is_stmt 0 view .LVU85
+ 365 0074 01AD     		add	r5, sp, #4
+ 366 0076 2846     		mov	r0, r5
+ 367 0078 FFF7FEFF 		bl	parse_float
+ 368              	.LVL21:
+  85:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 369              		.loc 1 85 16 discriminator 1 view .LVU86
+ 370 007c 6060     		str	r0, [r4, #4]	@ float
+  86:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$ROT", 4) == 0) {
+ 371              		.loc 1 86 5 is_stmt 1 view .LVU87
+  86:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$ROT", 4) == 0) {
+ 372              		.loc 1 86 18 is_stmt 0 view .LVU88
+ 373 007e 2846     		mov	r0, r5
+ 374 0080 FFF7FEFF 		bl	parse_float
+ 375              	.LVL22:
+  86:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$ROT", 4) == 0) {
+ 376              		.loc 1 86 16 discriminator 1 view .LVU89
+ 377 0084 A060     		str	r0, [r4, #8]	@ float
+ 378              	.L25:
+  86:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$ROT", 4) == 0) {
+ 379              		.loc 1 86 16 discriminator 1 view .LVU90
+ARM GAS  /tmp/ccomIWdt.s 			page 10
+
+
+ 380              	.LBE6:
+  98:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$QRY", 4) == 0) {
+  99:Core/Src/uart_comm.c ****     cmd.type = CMD_QUERY;
+ 100:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$PID", 4) == 0) {
+ 101:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 102:Core/Src/uart_comm.c ****     cmd.type = CMD_PID;
+ 103:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+ 104:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 105:Core/Src/uart_comm.c ****     cmd.param3 = parse_float(&p);
+ 106:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$TST", 4) == 0) {
+ 107:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 108:Core/Src/uart_comm.c ****     cmd.type = CMD_TEST;
+ 109:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p); /* left PWM */
+ 110:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* right PWM */
+ 111:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$DBG", 4) == 0) {
+ 112:Core/Src/uart_comm.c ****     cmd.type = CMD_DBG;
+ 113:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$BIAS", 5) == 0) {
+ 114:Core/Src/uart_comm.c ****     const char *p = rx_line + 5;
+ 115:Core/Src/uart_comm.c ****     cmd.type = CMD_BIAS;
+ 116:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p); /* left FF gain */
+ 117:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* right FF gain */
+ 118:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$SPD", 4) == 0) {
+ 119:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 120:Core/Src/uart_comm.c ****     cmd.type = CMD_SPEED_PID;
+ 121:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p); /* Kp */
+ 122:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* Ki */
+ 123:Core/Src/uart_comm.c ****     cmd.param3 = parse_float(&p); /* Kd */
+ 124:Core/Src/uart_comm.c ****   }
+ 125:Core/Src/uart_comm.c **** 
+ 126:Core/Src/uart_comm.c ****   /* Reset buffer for next line */
+ 127:Core/Src/uart_comm.c ****   rx_line_idx = 0;
+ 381              		.loc 1 127 3 is_stmt 1 view .LVU91
+ 382              		.loc 1 127 15 is_stmt 0 view .LVU92
+ 383 0086 4B4B     		ldr	r3, .L42+28
+ 384 0088 0022     		movs	r2, #0
+ 385 008a 1A70     		strb	r2, [r3]
+ 128:Core/Src/uart_comm.c **** 
+ 129:Core/Src/uart_comm.c ****   return cmd;
+ 386              		.loc 1 129 3 is_stmt 1 view .LVU93
+ 387              	.L21:
+ 130:Core/Src/uart_comm.c **** }
+ 388              		.loc 1 130 1 is_stmt 0 view .LVU94
+ 389 008c 2046     		mov	r0, r4
+ 390 008e 05B0     		add	sp, sp, #20
+ 391              	.LCFI5:
+ 392              		.cfi_remember_state
+ 393              		.cfi_def_cfa_offset 12
+ 394              		@ sp needed
+ 395 0090 30BD     		pop	{r4, r5, pc}
+ 396              	.LVL23:
+ 397              	.L37:
+ 398              	.LCFI6:
+ 399              		.cfi_restore_state
+ 400              	.LBB7:
+  88:Core/Src/uart_comm.c ****     cmd.type = CMD_ROTATE;
+ 401              		.loc 1 88 5 is_stmt 1 view .LVU95
+  88:Core/Src/uart_comm.c ****     cmd.type = CMD_ROTATE;
+ARM GAS  /tmp/ccomIWdt.s 			page 11
+
+
+ 402              		.loc 1 88 17 is_stmt 0 view .LVU96
+ 403 0092 474B     		ldr	r3, .L42+24
+ 404 0094 0193     		str	r3, [sp, #4]
+  89:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+ 405              		.loc 1 89 5 is_stmt 1 view .LVU97
+  89:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+ 406              		.loc 1 89 14 is_stmt 0 view .LVU98
+ 407 0096 0223     		movs	r3, #2
+ 408 0098 2370     		strb	r3, [r4]
+  90:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 409              		.loc 1 90 5 is_stmt 1 view .LVU99
+  90:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 410              		.loc 1 90 18 is_stmt 0 view .LVU100
+ 411 009a 01AD     		add	r5, sp, #4
+ 412 009c 2846     		mov	r0, r5
+ 413 009e FFF7FEFF 		bl	parse_float
+ 414              	.LVL24:
+  90:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 415              		.loc 1 90 16 discriminator 1 view .LVU101
+ 416 00a2 6060     		str	r0, [r4, #4]	@ float
+  91:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$FWD", 4) == 0) {
+ 417              		.loc 1 91 5 is_stmt 1 view .LVU102
+  91:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$FWD", 4) == 0) {
+ 418              		.loc 1 91 18 is_stmt 0 view .LVU103
+ 419 00a4 2846     		mov	r0, r5
+ 420 00a6 FFF7FEFF 		bl	parse_float
+ 421              	.LVL25:
+  91:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$FWD", 4) == 0) {
+ 422              		.loc 1 91 16 discriminator 1 view .LVU104
+ 423 00aa A060     		str	r0, [r4, #8]	@ float
+ 424              	.LBE7:
+ 425 00ac EBE7     		b	.L25
+ 426              	.L38:
+ 427              	.LBB8:
+  93:Core/Src/uart_comm.c ****     cmd.type = CMD_STRAIGHT;
+ 428              		.loc 1 93 5 is_stmt 1 view .LVU105
+  93:Core/Src/uart_comm.c ****     cmd.type = CMD_STRAIGHT;
+ 429              		.loc 1 93 17 is_stmt 0 view .LVU106
+ 430 00ae 404B     		ldr	r3, .L42+24
+ 431 00b0 0193     		str	r3, [sp, #4]
+  94:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+ 432              		.loc 1 94 5 is_stmt 1 view .LVU107
+  94:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+ 433              		.loc 1 94 14 is_stmt 0 view .LVU108
+ 434 00b2 0323     		movs	r3, #3
+ 435 00b4 2370     		strb	r3, [r4]
+  95:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$STP", 4) == 0) {
+ 436              		.loc 1 95 5 is_stmt 1 view .LVU109
+  95:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$STP", 4) == 0) {
+ 437              		.loc 1 95 18 is_stmt 0 view .LVU110
+ 438 00b6 01A8     		add	r0, sp, #4
+ 439 00b8 FFF7FEFF 		bl	parse_float
+ 440              	.LVL26:
+  95:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$STP", 4) == 0) {
+ 441              		.loc 1 95 16 discriminator 1 view .LVU111
+ 442 00bc 6060     		str	r0, [r4, #4]	@ float
+ 443              	.LBE8:
+ARM GAS  /tmp/ccomIWdt.s 			page 12
+
+
+ 444 00be E2E7     		b	.L25
+ 445              	.L28:
+  98:Core/Src/uart_comm.c ****     cmd.type = CMD_QUERY;
+ 446              		.loc 1 98 10 is_stmt 1 view .LVU112
+  98:Core/Src/uart_comm.c ****     cmd.type = CMD_QUERY;
+ 447              		.loc 1 98 14 is_stmt 0 view .LVU113
+ 448 00c0 0422     		movs	r2, #4
+ 449 00c2 3D49     		ldr	r1, .L42+32
+ 450 00c4 3648     		ldr	r0, .L42+8
+ 451 00c6 FFF7FEFF 		bl	strncmp
+ 452              	.LVL27:
+  98:Core/Src/uart_comm.c ****     cmd.type = CMD_QUERY;
+ 453              		.loc 1 98 13 discriminator 1 view .LVU114
+ 454 00ca 10B9     		cbnz	r0, .L29
+  99:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$PID", 4) == 0) {
+ 455              		.loc 1 99 5 is_stmt 1 view .LVU115
+  99:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$PID", 4) == 0) {
+ 456              		.loc 1 99 14 is_stmt 0 view .LVU116
+ 457 00cc 0523     		movs	r3, #5
+ 458 00ce 2370     		strb	r3, [r4]
+ 459 00d0 D9E7     		b	.L25
+ 460              	.L29:
+ 100:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 461              		.loc 1 100 10 is_stmt 1 view .LVU117
+ 100:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 462              		.loc 1 100 14 is_stmt 0 view .LVU118
+ 463 00d2 0422     		movs	r2, #4
+ 464 00d4 3949     		ldr	r1, .L42+36
+ 465 00d6 3248     		ldr	r0, .L42+8
+ 466 00d8 FFF7FEFF 		bl	strncmp
+ 467              	.LVL28:
+ 100:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 468              		.loc 1 100 13 discriminator 1 view .LVU119
+ 469 00dc 70B1     		cbz	r0, .L39
+ 106:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 470              		.loc 1 106 10 is_stmt 1 view .LVU120
+ 106:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 471              		.loc 1 106 14 is_stmt 0 view .LVU121
+ 472 00de 0422     		movs	r2, #4
+ 473 00e0 3749     		ldr	r1, .L42+40
+ 474 00e2 2F48     		ldr	r0, .L42+8
+ 475 00e4 FFF7FEFF 		bl	strncmp
+ 476              	.LVL29:
+ 106:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 477              		.loc 1 106 13 discriminator 1 view .LVU122
+ 478 00e8 D0B1     		cbz	r0, .L40
+ 111:Core/Src/uart_comm.c ****     cmd.type = CMD_DBG;
+ 479              		.loc 1 111 10 is_stmt 1 view .LVU123
+ 111:Core/Src/uart_comm.c ****     cmd.type = CMD_DBG;
+ 480              		.loc 1 111 14 is_stmt 0 view .LVU124
+ 481 00ea 0422     		movs	r2, #4
+ 482 00ec 3549     		ldr	r1, .L42+44
+ 483 00ee 2C48     		ldr	r0, .L42+8
+ 484 00f0 FFF7FEFF 		bl	strncmp
+ 485              	.LVL30:
+ 111:Core/Src/uart_comm.c ****     cmd.type = CMD_DBG;
+ 486              		.loc 1 111 13 discriminator 1 view .LVU125
+ARM GAS  /tmp/ccomIWdt.s 			page 13
+
+
+ 487 00f4 10BB     		cbnz	r0, .L32
+ 112:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$BIAS", 5) == 0) {
+ 488              		.loc 1 112 5 is_stmt 1 view .LVU126
+ 112:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$BIAS", 5) == 0) {
+ 489              		.loc 1 112 14 is_stmt 0 view .LVU127
+ 490 00f6 0823     		movs	r3, #8
+ 491 00f8 2370     		strb	r3, [r4]
+ 492 00fa C4E7     		b	.L25
+ 493              	.L39:
+ 494              	.LBB9:
+ 101:Core/Src/uart_comm.c ****     cmd.type = CMD_PID;
+ 495              		.loc 1 101 5 is_stmt 1 view .LVU128
+ 101:Core/Src/uart_comm.c ****     cmd.type = CMD_PID;
+ 496              		.loc 1 101 17 is_stmt 0 view .LVU129
+ 497 00fc 2C4B     		ldr	r3, .L42+24
+ 498 00fe 0193     		str	r3, [sp, #4]
+ 102:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+ 499              		.loc 1 102 5 is_stmt 1 view .LVU130
+ 102:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p);
+ 500              		.loc 1 102 14 is_stmt 0 view .LVU131
+ 501 0100 0623     		movs	r3, #6
+ 502 0102 2370     		strb	r3, [r4]
+ 103:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 503              		.loc 1 103 5 is_stmt 1 view .LVU132
+ 103:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 504              		.loc 1 103 18 is_stmt 0 view .LVU133
+ 505 0104 01AD     		add	r5, sp, #4
+ 506 0106 2846     		mov	r0, r5
+ 507 0108 FFF7FEFF 		bl	parse_float
+ 508              	.LVL31:
+ 103:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p);
+ 509              		.loc 1 103 16 discriminator 1 view .LVU134
+ 510 010c 6060     		str	r0, [r4, #4]	@ float
+ 104:Core/Src/uart_comm.c ****     cmd.param3 = parse_float(&p);
+ 511              		.loc 1 104 5 is_stmt 1 view .LVU135
+ 104:Core/Src/uart_comm.c ****     cmd.param3 = parse_float(&p);
+ 512              		.loc 1 104 18 is_stmt 0 view .LVU136
+ 513 010e 2846     		mov	r0, r5
+ 514 0110 FFF7FEFF 		bl	parse_float
+ 515              	.LVL32:
+ 104:Core/Src/uart_comm.c ****     cmd.param3 = parse_float(&p);
+ 516              		.loc 1 104 16 discriminator 1 view .LVU137
+ 517 0114 A060     		str	r0, [r4, #8]	@ float
+ 105:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$TST", 4) == 0) {
+ 518              		.loc 1 105 5 is_stmt 1 view .LVU138
+ 105:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$TST", 4) == 0) {
+ 519              		.loc 1 105 18 is_stmt 0 view .LVU139
+ 520 0116 2846     		mov	r0, r5
+ 521 0118 FFF7FEFF 		bl	parse_float
+ 522              	.LVL33:
+ 105:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$TST", 4) == 0) {
+ 523              		.loc 1 105 16 discriminator 1 view .LVU140
+ 524 011c E060     		str	r0, [r4, #12]	@ float
+ 525              	.LBE9:
+ 526 011e B2E7     		b	.L25
+ 527              	.L40:
+ 528              	.LBB10:
+ARM GAS  /tmp/ccomIWdt.s 			page 14
+
+
+ 107:Core/Src/uart_comm.c ****     cmd.type = CMD_TEST;
+ 529              		.loc 1 107 5 is_stmt 1 view .LVU141
+ 107:Core/Src/uart_comm.c ****     cmd.type = CMD_TEST;
+ 530              		.loc 1 107 17 is_stmt 0 view .LVU142
+ 531 0120 234B     		ldr	r3, .L42+24
+ 532 0122 0193     		str	r3, [sp, #4]
+ 108:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p); /* left PWM */
+ 533              		.loc 1 108 5 is_stmt 1 view .LVU143
+ 108:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p); /* left PWM */
+ 534              		.loc 1 108 14 is_stmt 0 view .LVU144
+ 535 0124 0723     		movs	r3, #7
+ 536 0126 2370     		strb	r3, [r4]
+ 109:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* right PWM */
+ 537              		.loc 1 109 5 is_stmt 1 view .LVU145
+ 109:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* right PWM */
+ 538              		.loc 1 109 18 is_stmt 0 view .LVU146
+ 539 0128 01AD     		add	r5, sp, #4
+ 540 012a 2846     		mov	r0, r5
+ 541 012c FFF7FEFF 		bl	parse_float
+ 542              	.LVL34:
+ 109:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* right PWM */
+ 543              		.loc 1 109 16 discriminator 1 view .LVU147
+ 544 0130 6060     		str	r0, [r4, #4]	@ float
+ 110:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$DBG", 4) == 0) {
+ 545              		.loc 1 110 5 is_stmt 1 view .LVU148
+ 110:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$DBG", 4) == 0) {
+ 546              		.loc 1 110 18 is_stmt 0 view .LVU149
+ 547 0132 2846     		mov	r0, r5
+ 548 0134 FFF7FEFF 		bl	parse_float
+ 549              	.LVL35:
+ 110:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$DBG", 4) == 0) {
+ 550              		.loc 1 110 16 discriminator 1 view .LVU150
+ 551 0138 A060     		str	r0, [r4, #8]	@ float
+ 552              	.LBE10:
+ 553 013a A4E7     		b	.L25
+ 554              	.L32:
+ 113:Core/Src/uart_comm.c ****     const char *p = rx_line + 5;
+ 555              		.loc 1 113 10 is_stmt 1 view .LVU151
+ 113:Core/Src/uart_comm.c ****     const char *p = rx_line + 5;
+ 556              		.loc 1 113 14 is_stmt 0 view .LVU152
+ 557 013c 0522     		movs	r2, #5
+ 558 013e 2249     		ldr	r1, .L42+48
+ 559 0140 1748     		ldr	r0, .L42+8
+ 560 0142 FFF7FEFF 		bl	strncmp
+ 561              	.LVL36:
+ 113:Core/Src/uart_comm.c ****     const char *p = rx_line + 5;
+ 562              		.loc 1 113 13 discriminator 1 view .LVU153
+ 563 0146 C0B1     		cbz	r0, .L41
+ 118:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 564              		.loc 1 118 10 is_stmt 1 view .LVU154
+ 118:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 565              		.loc 1 118 14 is_stmt 0 view .LVU155
+ 566 0148 0422     		movs	r2, #4
+ 567 014a 2049     		ldr	r1, .L42+52
+ 568 014c 1448     		ldr	r0, .L42+8
+ 569 014e FFF7FEFF 		bl	strncmp
+ 570              	.LVL37:
+ARM GAS  /tmp/ccomIWdt.s 			page 15
+
+
+ 118:Core/Src/uart_comm.c ****     const char *p = rx_line + 4;
+ 571              		.loc 1 118 13 discriminator 1 view .LVU156
+ 572 0152 0028     		cmp	r0, #0
+ 573 0154 97D1     		bne	.L25
+ 574              	.LBB11:
+ 119:Core/Src/uart_comm.c ****     cmd.type = CMD_SPEED_PID;
+ 575              		.loc 1 119 5 is_stmt 1 view .LVU157
+ 119:Core/Src/uart_comm.c ****     cmd.type = CMD_SPEED_PID;
+ 576              		.loc 1 119 17 is_stmt 0 view .LVU158
+ 577 0156 164B     		ldr	r3, .L42+24
+ 578 0158 0193     		str	r3, [sp, #4]
+ 120:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p); /* Kp */
+ 579              		.loc 1 120 5 is_stmt 1 view .LVU159
+ 120:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p); /* Kp */
+ 580              		.loc 1 120 14 is_stmt 0 view .LVU160
+ 581 015a 0A23     		movs	r3, #10
+ 582 015c 2370     		strb	r3, [r4]
+ 121:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* Ki */
+ 583              		.loc 1 121 5 is_stmt 1 view .LVU161
+ 121:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* Ki */
+ 584              		.loc 1 121 18 is_stmt 0 view .LVU162
+ 585 015e 01AD     		add	r5, sp, #4
+ 586 0160 2846     		mov	r0, r5
+ 587 0162 FFF7FEFF 		bl	parse_float
+ 588              	.LVL38:
+ 121:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* Ki */
+ 589              		.loc 1 121 16 discriminator 1 view .LVU163
+ 590 0166 6060     		str	r0, [r4, #4]	@ float
+ 122:Core/Src/uart_comm.c ****     cmd.param3 = parse_float(&p); /* Kd */
+ 591              		.loc 1 122 5 is_stmt 1 view .LVU164
+ 122:Core/Src/uart_comm.c ****     cmd.param3 = parse_float(&p); /* Kd */
+ 592              		.loc 1 122 18 is_stmt 0 view .LVU165
+ 593 0168 2846     		mov	r0, r5
+ 594 016a FFF7FEFF 		bl	parse_float
+ 595              	.LVL39:
+ 122:Core/Src/uart_comm.c ****     cmd.param3 = parse_float(&p); /* Kd */
+ 596              		.loc 1 122 16 discriminator 1 view .LVU166
+ 597 016e A060     		str	r0, [r4, #8]	@ float
+ 123:Core/Src/uart_comm.c ****   }
+ 598              		.loc 1 123 5 is_stmt 1 view .LVU167
+ 123:Core/Src/uart_comm.c ****   }
+ 599              		.loc 1 123 18 is_stmt 0 view .LVU168
+ 600 0170 2846     		mov	r0, r5
+ 601 0172 FFF7FEFF 		bl	parse_float
+ 602              	.LVL40:
+ 123:Core/Src/uart_comm.c ****   }
+ 603              		.loc 1 123 16 discriminator 1 view .LVU169
+ 604 0176 E060     		str	r0, [r4, #12]	@ float
+ 605 0178 85E7     		b	.L25
+ 606              	.L41:
+ 123:Core/Src/uart_comm.c ****   }
+ 607              		.loc 1 123 16 discriminator 1 view .LVU170
+ 608              	.LBE11:
+ 609              	.LBB12:
+ 114:Core/Src/uart_comm.c ****     cmd.type = CMD_BIAS;
+ 610              		.loc 1 114 5 is_stmt 1 view .LVU171
+ 114:Core/Src/uart_comm.c ****     cmd.type = CMD_BIAS;
+ARM GAS  /tmp/ccomIWdt.s 			page 16
+
+
+ 611              		.loc 1 114 17 is_stmt 0 view .LVU172
+ 612 017a 154B     		ldr	r3, .L42+56
+ 613 017c 0193     		str	r3, [sp, #4]
+ 115:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p); /* left FF gain */
+ 614              		.loc 1 115 5 is_stmt 1 view .LVU173
+ 115:Core/Src/uart_comm.c ****     cmd.param1 = parse_float(&p); /* left FF gain */
+ 615              		.loc 1 115 14 is_stmt 0 view .LVU174
+ 616 017e 0923     		movs	r3, #9
+ 617 0180 2370     		strb	r3, [r4]
+ 116:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* right FF gain */
+ 618              		.loc 1 116 5 is_stmt 1 view .LVU175
+ 116:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* right FF gain */
+ 619              		.loc 1 116 18 is_stmt 0 view .LVU176
+ 620 0182 01AD     		add	r5, sp, #4
+ 621 0184 2846     		mov	r0, r5
+ 622 0186 FFF7FEFF 		bl	parse_float
+ 623              	.LVL41:
+ 116:Core/Src/uart_comm.c ****     cmd.param2 = parse_float(&p); /* right FF gain */
+ 624              		.loc 1 116 16 discriminator 1 view .LVU177
+ 625 018a 6060     		str	r0, [r4, #4]	@ float
+ 117:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$SPD", 4) == 0) {
+ 626              		.loc 1 117 5 is_stmt 1 view .LVU178
+ 117:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$SPD", 4) == 0) {
+ 627              		.loc 1 117 18 is_stmt 0 view .LVU179
+ 628 018c 2846     		mov	r0, r5
+ 629 018e FFF7FEFF 		bl	parse_float
+ 630              	.LVL42:
+ 117:Core/Src/uart_comm.c ****   } else if (strncmp(rx_line, "$SPD", 4) == 0) {
+ 631              		.loc 1 117 16 discriminator 1 view .LVU180
+ 632 0192 A060     		str	r0, [r4, #8]	@ float
+ 633              	.LBE12:
+ 634 0194 77E7     		b	.L25
+ 635              	.L43:
+ 636 0196 00BF     		.align	2
+ 637              	.L42:
+ 638 0198 00000000 		.word	line_ready
+ 639 019c 00000000 		.word	.LC0
+ 640 01a0 00000000 		.word	rx_line
+ 641 01a4 08000000 		.word	.LC1
+ 642 01a8 10000000 		.word	.LC2
+ 643 01ac 18000000 		.word	.LC3
+ 644 01b0 04000000 		.word	rx_line+4
+ 645 01b4 00000000 		.word	rx_line_idx
+ 646 01b8 20000000 		.word	.LC4
+ 647 01bc 28000000 		.word	.LC5
+ 648 01c0 30000000 		.word	.LC6
+ 649 01c4 38000000 		.word	.LC7
+ 650 01c8 40000000 		.word	.LC8
+ 651 01cc 48000000 		.word	.LC9
+ 652 01d0 05000000 		.word	rx_line+5
+ 653              		.cfi_endproc
+ 654              	.LFE72:
+ 656              		.section	.rodata.UartComm_SendOdometry.str1.4,"aMS",%progbits,1
+ 657              		.align	2
+ 658              	.LC10:
+ 659 0000 244F444F 		.ascii	"$ODO,%.2f,%d,%d,%.1f,%.1f\015\012\000"
+ 659      2C252E32 
+ARM GAS  /tmp/ccomIWdt.s 			page 17
+
+
+ 659      662C2564 
+ 659      2C25642C 
+ 659      252E3166 
+ 660              		.section	.text.UartComm_SendOdometry,"ax",%progbits
+ 661              		.align	1
+ 662              		.global	UartComm_SendOdometry
+ 663              		.syntax unified
+ 664              		.thumb
+ 665              		.thumb_func
+ 667              	UartComm_SendOdometry:
+ 668              	.LVL43:
+ 669              	.LFB73:
+ 131:Core/Src/uart_comm.c **** 
+ 132:Core/Src/uart_comm.c **** /* ========================== TX ========================================== */
+ 133:Core/Src/uart_comm.c **** 
+ 134:Core/Src/uart_comm.c **** void UartComm_SendOdometry(float heading, int16_t enc_left, int16_t enc_right,
+ 135:Core/Src/uart_comm.c ****                            float speed_l, float speed_r) {
+ 670              		.loc 1 135 58 is_stmt 1 view -0
+ 671              		.cfi_startproc
+ 672              		@ args = 4, pretend = 0, frame = 0
+ 673              		@ frame_needed = 0, uses_anonymous_args = 0
+ 674              		.loc 1 135 58 is_stmt 0 view .LVU182
+ 675 0000 F0B5     		push	{r4, r5, r6, r7, lr}
+ 676              	.LCFI7:
+ 677              		.cfi_def_cfa_offset 20
+ 678              		.cfi_offset 4, -20
+ 679              		.cfi_offset 5, -16
+ 680              		.cfi_offset 6, -12
+ 681              		.cfi_offset 7, -8
+ 682              		.cfi_offset 14, -4
+ 683 0002 89B0     		sub	sp, sp, #36
+ 684              	.LCFI8:
+ 685              		.cfi_def_cfa_offset 56
+ 686 0004 0446     		mov	r4, r0
+ 687 0006 0D46     		mov	r5, r1
+ 688 0008 1646     		mov	r6, r2
+ 689 000a 1F46     		mov	r7, r3
+ 136:Core/Src/uart_comm.c ****   int len = snprintf(tx_buf, TX_BUF_SIZE, "$ODO,%.2f,%d,%d,%.1f,%.1f\r\n",
+ 690              		.loc 1 136 3 is_stmt 1 view .LVU183
+ 691              		.loc 1 136 13 is_stmt 0 view .LVU184
+ 692 000c 0E98     		ldr	r0, [sp, #56]	@ float
+ 693              	.LVL44:
+ 694              		.loc 1 136 13 view .LVU185
+ 695 000e FFF7FEFF 		bl	__aeabi_f2d
+ 696              	.LVL45:
+ 697              		.loc 1 136 13 view .LVU186
+ 698 0012 CDE90601 		strd	r0, [sp, #24]
+ 699 0016 3846     		mov	r0, r7
+ 700 0018 FFF7FEFF 		bl	__aeabi_f2d
+ 701              	.LVL46:
+ 702 001c CDE90401 		strd	r0, [sp, #16]
+ 703 0020 0396     		str	r6, [sp, #12]
+ 704 0022 0295     		str	r5, [sp, #8]
+ 705 0024 2046     		mov	r0, r4
+ 706 0026 FFF7FEFF 		bl	__aeabi_f2d
+ 707              	.LVL47:
+ 708 002a CDE90001 		strd	r0, [sp]
+ARM GAS  /tmp/ccomIWdt.s 			page 18
+
+
+ 709 002e 074A     		ldr	r2, .L48
+ 710 0030 8021     		movs	r1, #128
+ 711 0032 0748     		ldr	r0, .L48+4
+ 712 0034 FFF7FEFF 		bl	snprintf
+ 713              	.LVL48:
+ 137:Core/Src/uart_comm.c ****                      heading, enc_left, enc_right, speed_l, speed_r);
+ 138:Core/Src/uart_comm.c ****   if (len > 0)
+ 714              		.loc 1 138 3 is_stmt 1 view .LVU187
+ 715              		.loc 1 138 6 is_stmt 0 view .LVU188
+ 716 0038 0028     		cmp	r0, #0
+ 717              		.loc 1 138 6 view .LVU189
+ 718 003a 01DC     		bgt	.L47
+ 719              	.LVL49:
+ 720              	.L44:
+ 139:Core/Src/uart_comm.c ****     CDC_Transmit_FS((uint8_t *)tx_buf, (uint16_t)len);
+ 140:Core/Src/uart_comm.c **** }
+ 721              		.loc 1 140 1 view .LVU190
+ 722 003c 09B0     		add	sp, sp, #36
+ 723              	.LCFI9:
+ 724              		.cfi_remember_state
+ 725              		.cfi_def_cfa_offset 20
+ 726              		@ sp needed
+ 727 003e F0BD     		pop	{r4, r5, r6, r7, pc}
+ 728              	.LVL50:
+ 729              	.L47:
+ 730              	.LCFI10:
+ 731              		.cfi_restore_state
+ 139:Core/Src/uart_comm.c ****     CDC_Transmit_FS((uint8_t *)tx_buf, (uint16_t)len);
+ 732              		.loc 1 139 5 is_stmt 1 view .LVU191
+ 733 0040 81B2     		uxth	r1, r0
+ 734 0042 0348     		ldr	r0, .L48+4
+ 735              	.LVL51:
+ 139:Core/Src/uart_comm.c ****     CDC_Transmit_FS((uint8_t *)tx_buf, (uint16_t)len);
+ 736              		.loc 1 139 5 is_stmt 0 view .LVU192
+ 737 0044 FFF7FEFF 		bl	CDC_Transmit_FS
+ 738              	.LVL52:
+ 739              		.loc 1 140 1 view .LVU193
+ 740 0048 F8E7     		b	.L44
+ 741              	.L49:
+ 742 004a 00BF     		.align	2
+ 743              	.L48:
+ 744 004c 00000000 		.word	.LC10
+ 745 0050 00000000 		.word	tx_buf
+ 746              		.cfi_endproc
+ 747              	.LFE73:
+ 749              		.section	.text.UartComm_SendString,"ax",%progbits
+ 750              		.align	1
+ 751              		.global	UartComm_SendString
+ 752              		.syntax unified
+ 753              		.thumb
+ 754              		.thumb_func
+ 756              	UartComm_SendString:
+ 757              	.LVL53:
+ 758              	.LFB74:
+ 141:Core/Src/uart_comm.c **** 
+ 142:Core/Src/uart_comm.c **** void UartComm_SendString(const char *str) {
+ 759              		.loc 1 142 43 is_stmt 1 view -0
+ARM GAS  /tmp/ccomIWdt.s 			page 19
+
+
+ 760              		.cfi_startproc
+ 761              		@ args = 0, pretend = 0, frame = 0
+ 762              		@ frame_needed = 0, uses_anonymous_args = 0
+ 763              		.loc 1 142 43 is_stmt 0 view .LVU195
+ 764 0000 10B5     		push	{r4, lr}
+ 765              	.LCFI11:
+ 766              		.cfi_def_cfa_offset 8
+ 767              		.cfi_offset 4, -8
+ 768              		.cfi_offset 14, -4
+ 769 0002 0446     		mov	r4, r0
+ 143:Core/Src/uart_comm.c ****   CDC_Transmit_FS((uint8_t *)str, (uint16_t)strlen(str));
+ 770              		.loc 1 143 3 is_stmt 1 view .LVU196
+ 771              		.loc 1 143 45 is_stmt 0 view .LVU197
+ 772 0004 FFF7FEFF 		bl	strlen
+ 773              	.LVL54:
+ 774              		.loc 1 143 3 discriminator 1 view .LVU198
+ 775 0008 81B2     		uxth	r1, r0
+ 776 000a 2046     		mov	r0, r4
+ 777 000c FFF7FEFF 		bl	CDC_Transmit_FS
+ 778              	.LVL55:
+ 144:Core/Src/uart_comm.c **** }
+ 779              		.loc 1 144 1 view .LVU199
+ 780 0010 10BD     		pop	{r4, pc}
+ 781              		.loc 1 144 1 view .LVU200
+ 782              		.cfi_endproc
+ 783              	.LFE74:
+ 785              		.section	.bss.tx_buf,"aw",%nobits
+ 786              		.align	2
+ 789              	tx_buf:
+ 790 0000 00000000 		.space	128
+ 790      00000000 
+ 790      00000000 
+ 790      00000000 
+ 790      00000000 
+ 791              		.section	.bss.line_ready,"aw",%nobits
+ 794              	line_ready:
+ 795 0000 00       		.space	1
+ 796              		.section	.bss.rx_line_idx,"aw",%nobits
+ 799              	rx_line_idx:
+ 800 0000 00       		.space	1
+ 801              		.section	.bss.rx_line,"aw",%nobits
+ 802              		.align	2
+ 805              	rx_line:
+ 806 0000 00000000 		.space	128
+ 806      00000000 
+ 806      00000000 
+ 806      00000000 
+ 806      00000000 
+ 807              		.text
+ 808              	.Letext0:
+ 809              		.file 2 "/usr/arm-none-eabi/include/machine/_default_types.h"
+ 810              		.file 3 "/usr/arm-none-eabi/include/sys/_stdint.h"
+ 811              		.file 4 "/usr/lib/gcc/arm-none-eabi/14.2.0/include/stddef.h"
+ 812              		.file 5 "Core/Inc/uart_comm.h"
+ 813              		.file 6 "/usr/arm-none-eabi/include/string.h"
+ 814              		.file 7 "Core/Inc/usbd_cdc_if.h"
+ 815              		.file 8 "/usr/arm-none-eabi/include/stdio.h"
+ARM GAS  /tmp/ccomIWdt.s 			page 20
+
+
+ 816              		.file 9 "/usr/arm-none-eabi/include/stdlib.h"
+ARM GAS  /tmp/ccomIWdt.s 			page 21
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 uart_comm.c
+     /tmp/ccomIWdt.s:19     .text.process_rx_bytes:00000000 $t
+     /tmp/ccomIWdt.s:24     .text.process_rx_bytes:00000000 process_rx_bytes
+     /tmp/ccomIWdt.s:126    .text.process_rx_bytes:00000050 $d
+     /tmp/ccomIWdt.s:799    .bss.rx_line_idx:00000000 rx_line_idx
+     /tmp/ccomIWdt.s:805    .bss.rx_line:00000000 rx_line
+     /tmp/ccomIWdt.s:794    .bss.line_ready:00000000 line_ready
+     /tmp/ccomIWdt.s:133    .text.parse_float:00000000 $t
+     /tmp/ccomIWdt.s:138    .text.parse_float:00000000 parse_float
+     /tmp/ccomIWdt.s:183    .text.UartComm_Init:00000000 $t
+     /tmp/ccomIWdt.s:189    .text.UartComm_Init:00000000 UartComm_Init
+     /tmp/ccomIWdt.s:210    .text.UartComm_Init:0000000c $d
+     /tmp/ccomIWdt.s:216    .rodata.UartComm_Process.str1.4:00000000 $d
+     /tmp/ccomIWdt.s:247    .text.UartComm_Process:00000000 $t
+     /tmp/ccomIWdt.s:253    .text.UartComm_Process:00000000 UartComm_Process
+     /tmp/ccomIWdt.s:638    .text.UartComm_Process:00000198 $d
+     /tmp/ccomIWdt.s:657    .rodata.UartComm_SendOdometry.str1.4:00000000 $d
+     /tmp/ccomIWdt.s:661    .text.UartComm_SendOdometry:00000000 $t
+     /tmp/ccomIWdt.s:667    .text.UartComm_SendOdometry:00000000 UartComm_SendOdometry
+     /tmp/ccomIWdt.s:744    .text.UartComm_SendOdometry:0000004c $d
+     /tmp/ccomIWdt.s:789    .bss.tx_buf:00000000 tx_buf
+     /tmp/ccomIWdt.s:750    .text.UartComm_SendString:00000000 $t
+     /tmp/ccomIWdt.s:756    .text.UartComm_SendString:00000000 UartComm_SendString
+     /tmp/ccomIWdt.s:786    .bss.tx_buf:00000000 $d
+     /tmp/ccomIWdt.s:795    .bss.line_ready:00000000 $d
+     /tmp/ccomIWdt.s:800    .bss.rx_line_idx:00000000 $d
+     /tmp/ccomIWdt.s:802    .bss.rx_line:00000000 $d
+
+UNDEFINED SYMBOLS
+strtof
+CDC_GetRxData
+strncmp
+__aeabi_f2d
+snprintf
+CDC_Transmit_FS
+strlen

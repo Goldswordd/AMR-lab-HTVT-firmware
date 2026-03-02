@@ -1,0 +1,2206 @@
+ARM GAS  /tmp/ccT2cdC7.s 			page 1
+
+
+   1              		.cpu cortex-m3
+   2              		.arch armv7-m
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"robot.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.file 1 "Core/Src/robot.c"
+  18              		.section	.text.angle_diff,"ax",%progbits
+  19              		.align	1
+  20              		.syntax unified
+  21              		.thumb
+  22              		.thumb_func
+  24              	angle_diff:
+  25              	.LVL0:
+  26              	.LFB65:
+   1:Core/Src/robot.c **** /**
+   2:Core/Src/robot.c ****  * @file    robot.c
+   3:Core/Src/robot.c ****  * @brief   High-level robot motion — triple PID + feedforward architecture
+   4:Core/Src/robot.c ****  *
+   5:Core/Src/robot.c ****  * Architecture:
+   6:Core/Src/robot.c ****  *   1. HEADING PID: gyro heading → differential speed correction
+   7:Core/Src/robot.c ****  *   2. LEFT SPEED PID: encoder feedback + feedforward → left PWM
+   8:Core/Src/robot.c ****  *   3. RIGHT SPEED PID: encoder feedback + feedforward → right PWM
+   9:Core/Src/robot.c ****  *
+  10:Core/Src/robot.c ****  * Improvements v2:
+  11:Core/Src/robot.c ****  *   - Low-pass filtered encoder speed (removes quantization jitter)
+  12:Core/Src/robot.c ****  *   - Feedforward term (estimates base PWM from target speed)
+  13:Core/Src/robot.c ****  *   - Retuned PID gains for smooth operation
+  14:Core/Src/robot.c ****  *   - Dead zone compensation for motor static friction
+  15:Core/Src/robot.c ****  */
+  16:Core/Src/robot.c **** #include "robot.h"
+  17:Core/Src/robot.c **** #include "encoder.h"
+  18:Core/Src/robot.c **** #include "main.h"
+  19:Core/Src/robot.c **** #include "motor.h"
+  20:Core/Src/robot.c **** #include <math.h>
+  21:Core/Src/robot.c **** 
+  22:Core/Src/robot.c **** /* ========================== Global instance ============================= */
+  23:Core/Src/robot.c **** Robot_t robot;
+  24:Core/Src/robot.c **** 
+  25:Core/Src/robot.c **** /* ========================== Filtered speeds ============================= */
+  26:Core/Src/robot.c **** /* Low-pass filter smooths the quantized encoder readings (200Hz × low CPR
+  27:Core/Src/robot.c ****  * gives steppy speed values like 0, 200, 400...). Alpha=0.15 gives ~5Hz
+  28:Core/Src/robot.c ****  * bandwidth — smoother than 0.3 for low-CPR encoders. */
+  29:Core/Src/robot.c **** #define SPEED_FILTER_ALPHA 0.15f /* 0.0=very smooth, 1.0=raw */
+  30:Core/Src/robot.c **** static float filtered_speed_left = 0.05f;
+  31:Core/Src/robot.c **** static float filtered_speed_right = 0.0f;
+  32:Core/Src/robot.c **** 
+ARM GAS  /tmp/ccT2cdC7.s 			page 2
+
+
+  33:Core/Src/robot.c **** /* ========================== PID Default Gains =========================== */
+  34:Core/Src/robot.c **** /*
+  35:Core/Src/robot.c ****  * Tuning procedure:
+  36:Core/Src/robot.c ****  * 1. Start with Ki=0, Kd=0
+  37:Core/Src/robot.c ****  * 2. Increase Kp until oscillation, then back off 30%
+  38:Core/Src/robot.c ****  * 3. Add Ki slowly until steady-state error vanishes
+  39:Core/Src/robot.c ****  * 4. Kd usually not needed with feedforward — leave at 0
+  40:Core/Src/robot.c ****  *
+  41:Core/Src/robot.c ****  * With feedforward, PID only corrects the RESIDUAL error,
+  42:Core/Src/robot.c ****  * so gains can be much lower than without feedforward.
+  43:Core/Src/robot.c ****  */
+  44:Core/Src/robot.c **** 
+  45:Core/Src/robot.c **** /* Heading PID: error in degrees → output in ticks/s correction
+  46:Core/Src/robot.c ****  * Stronger than before to quickly correct drift from motor asymmetry */
+  47:Core/Src/robot.c **** #define HEADING_KP 4.0f        /* Aggressive to fight wheel asymmetry */
+  48:Core/Src/robot.c **** #define HEADING_KI 0.3f        /* Faster steady-state heading correction */
+  49:Core/Src/robot.c **** #define HEADING_KD 0.02f       /* Light damping — reduce heading oscillation */
+  50:Core/Src/robot.c **** #define HEADING_OUT_MAX 150.0f /* Max differential correction (ticks/s) */
+  51:Core/Src/robot.c **** 
+  52:Core/Src/robot.c **** /* Speed PID: error in ticks/s → output in PWM units (0..1000)
+  53:Core/Src/robot.c ****  * Note: feedforward handles ~80% of the output, PID only corrects residual.
+  54:Core/Src/robot.c ****  * Ki reduced from 1.5 to 0.5 to prevent integral windup oscillation. */
+  55:Core/Src/robot.c **** #define SPEED_KP 0.5f
+  56:Core/Src/robot.c **** #define SPEED_KI 0.5f
+  57:Core/Src/robot.c **** #define SPEED_KD 0.0f /* Disabled — feedforward + LP filter is enough */
+  58:Core/Src/robot.c **** #define SPEED_OUT_MAX                                                          \
+  59:Core/Src/robot.c ****   400.0f /* PID correction range (feedforward adds the rest) */
+  60:Core/Src/robot.c **** 
+  61:Core/Src/robot.c **** /* Feedforward: maps target speed (ticks/s) directly to approximate PWM.
+  62:Core/Src/robot.c ****  * Measured empirically: at PWM=300, motor typically runs ~200 ticks/s.
+  63:Core/Src/robot.c ****  * So gain ≈ 300/200 = 1.5. Adjust based on your motors! */
+  64:Core/Src/robot.c **** #define SPEED_FF_GAIN 1.5f /* PWM per (tick/s) — default for both wheels */
+  65:Core/Src/robot.c **** #define MOTOR_MIN_PWM 60   /* Minimum PWM to overcome static friction */
+  66:Core/Src/robot.c **** 
+  67:Core/Src/robot.c **** /* Per-wheel feedforward gains — tunable via $BIAS command to compensate
+  68:Core/Src/robot.c ****  * for motor asymmetry (different friction, winding resistance, etc.) */
+  69:Core/Src/robot.c **** static float ff_gain_left = SPEED_FF_GAIN;
+  70:Core/Src/robot.c **** static float ff_gain_right = SPEED_FF_GAIN;
+  71:Core/Src/robot.c **** 
+  72:Core/Src/robot.c **** /* Speed ramp: smooth acceleration instead of instant speed jump.
+  73:Core/Src/robot.c ****  * 600 ticks/s² means reaching 300 ticks/s takes 0.5 seconds. */
+  74:Core/Src/robot.c **** #define SPEED_RAMP_RATE 600.0f /* ticks/s per second */
+  75:Core/Src/robot.c **** static float ramped_speed = 0.0f;
+  76:Core/Src/robot.c **** 
+  77:Core/Src/robot.c **** /* Rotation tolerance */
+  78:Core/Src/robot.c **** #define ROTATION_TOLERANCE_DEG 1.5f
+  79:Core/Src/robot.c **** #define ROTATION_SETTLE_COUNT 20 /* 20 loops × 5ms = 100ms settled */
+  80:Core/Src/robot.c **** 
+  81:Core/Src/robot.c **** /* ========================== Helper: angle difference ==================== */
+  82:Core/Src/robot.c **** static float angle_diff(float target, float current) {
+  27              		.loc 1 82 54 view -0
+  28              		.cfi_startproc
+  29              		@ args = 0, pretend = 0, frame = 0
+  30              		@ frame_needed = 0, uses_anonymous_args = 0
+  31              		.loc 1 82 54 is_stmt 0 view .LVU1
+  32 0000 10B5     		push	{r4, lr}
+  33              	.LCFI0:
+ARM GAS  /tmp/ccT2cdC7.s 			page 3
+
+
+  34              		.cfi_def_cfa_offset 8
+  35              		.cfi_offset 4, -8
+  36              		.cfi_offset 14, -4
+  83:Core/Src/robot.c ****   float diff = target - current;
+  37              		.loc 1 83 3 is_stmt 1 view .LVU2
+  38              		.loc 1 83 9 is_stmt 0 view .LVU3
+  39 0002 FFF7FEFF 		bl	__aeabi_fsub
+  40              	.LVL1:
+  41              		.loc 1 83 9 view .LVU4
+  42 0006 0446     		mov	r4, r0
+  43              	.LVL2:
+  84:Core/Src/robot.c ****   while (diff > 180.0f)
+  44              		.loc 1 84 3 is_stmt 1 view .LVU5
+  45              		.loc 1 84 9 is_stmt 0 view .LVU6
+  46 0008 04E0     		b	.L2
+  47              	.LVL3:
+  48              	.L3:
+  85:Core/Src/robot.c ****     diff -= 360.0f;
+  49              		.loc 1 85 5 is_stmt 1 view .LVU7
+  50              		.loc 1 85 10 is_stmt 0 view .LVU8
+  51 000a 0C49     		ldr	r1, .L7
+  52 000c 2046     		mov	r0, r4
+  53 000e FFF7FEFF 		bl	__aeabi_fsub
+  54              	.LVL4:
+  55 0012 0446     		mov	r4, r0
+  56              	.LVL5:
+  57              	.L2:
+  84:Core/Src/robot.c ****   while (diff > 180.0f)
+  58              		.loc 1 84 15 is_stmt 1 view .LVU9
+  59 0014 0A49     		ldr	r1, .L7+4
+  60 0016 2046     		mov	r0, r4
+  61 0018 FFF7FEFF 		bl	__aeabi_fcmpgt
+  62              	.LVL6:
+  63 001c 0028     		cmp	r0, #0
+  64 001e F4D1     		bne	.L3
+  65 0020 04E0     		b	.L4
+  66              	.L5:
+  86:Core/Src/robot.c ****   while (diff < -180.0f)
+  87:Core/Src/robot.c ****     diff += 360.0f;
+  67              		.loc 1 87 5 view .LVU10
+  68              		.loc 1 87 10 is_stmt 0 view .LVU11
+  69 0022 0649     		ldr	r1, .L7
+  70 0024 2046     		mov	r0, r4
+  71 0026 FFF7FEFF 		bl	__aeabi_fadd
+  72              	.LVL7:
+  73 002a 0446     		mov	r4, r0
+  74              	.LVL8:
+  75              	.L4:
+  86:Core/Src/robot.c ****   while (diff < -180.0f)
+  76              		.loc 1 86 15 is_stmt 1 view .LVU12
+  77 002c 0549     		ldr	r1, .L7+8
+  78 002e 2046     		mov	r0, r4
+  79 0030 FFF7FEFF 		bl	__aeabi_fcmplt
+  80              	.LVL9:
+  81 0034 0028     		cmp	r0, #0
+  82 0036 F4D1     		bne	.L5
+  88:Core/Src/robot.c ****   return diff;
+ARM GAS  /tmp/ccT2cdC7.s 			page 4
+
+
+  83              		.loc 1 88 3 view .LVU13
+  89:Core/Src/robot.c **** }
+  84              		.loc 1 89 1 is_stmt 0 view .LVU14
+  85 0038 2046     		mov	r0, r4
+  86 003a 10BD     		pop	{r4, pc}
+  87              	.LVL10:
+  88              	.L8:
+  89              		.loc 1 89 1 view .LVU15
+  90              		.align	2
+  91              	.L7:
+  92 003c 0000B443 		.word	1135869952
+  93 0040 00003443 		.word	1127481344
+  94 0044 000034C3 		.word	-1020002304
+  95              		.cfi_endproc
+  96              	.LFE65:
+  98              		.section	.text.apply_deadzone,"ax",%progbits
+  99              		.align	1
+ 100              		.syntax unified
+ 101              		.thumb
+ 102              		.thumb_func
+ 104              	apply_deadzone:
+ 105              	.LVL11:
+ 106              	.LFB66:
+  90:Core/Src/robot.c **** 
+  91:Core/Src/robot.c **** /* ========================== Helper: apply dead zone ===================== */
+  92:Core/Src/robot.c **** static int16_t apply_deadzone(float pwm_f) {
+ 107              		.loc 1 92 44 is_stmt 1 view -0
+ 108              		.cfi_startproc
+ 109              		@ args = 0, pretend = 0, frame = 0
+ 110              		@ frame_needed = 0, uses_anonymous_args = 0
+ 111              		.loc 1 92 44 is_stmt 0 view .LVU17
+ 112 0000 08B5     		push	{r3, lr}
+ 113              	.LCFI1:
+ 114              		.cfi_def_cfa_offset 8
+ 115              		.cfi_offset 3, -8
+ 116              		.cfi_offset 14, -4
+  93:Core/Src/robot.c ****   int16_t pwm = (int16_t)pwm_f;
+ 117              		.loc 1 93 3 is_stmt 1 view .LVU18
+ 118              		.loc 1 93 11 is_stmt 0 view .LVU19
+ 119 0002 FFF7FEFF 		bl	__aeabi_f2iz
+ 120              	.LVL12:
+  94:Core/Src/robot.c ****   /* If PID+FF wants the motor to move but PWM is below minimum,
+  95:Core/Src/robot.c ****    * bump it up to overcome static friction */
+  96:Core/Src/robot.c ****   if (pwm > 0 && pwm < MOTOR_MIN_PWM)
+ 121              		.loc 1 96 3 is_stmt 1 view .LVU20
+ 122              		.loc 1 96 15 is_stmt 0 view .LVU21
+ 123 0006 83B2     		uxth	r3, r0
+ 124 0008 5A1E     		subs	r2, r3, #1
+ 125 000a 92B2     		uxth	r2, r2
+ 126              		.loc 1 96 6 view .LVU22
+ 127 000c 3A2A     		cmp	r2, #58
+ 128 000e 07D9     		bls	.L13
+ 129 0010 00B2     		sxth	r0, r0
+  97:Core/Src/robot.c ****     pwm = MOTOR_MIN_PWM;
+  98:Core/Src/robot.c ****   if (pwm < 0 && pwm > -MOTOR_MIN_PWM)
+ 130              		.loc 1 98 3 is_stmt 1 view .LVU23
+ 131              		.loc 1 98 15 is_stmt 0 view .LVU24
+ARM GAS  /tmp/ccT2cdC7.s 			page 5
+
+
+ 132 0012 3B33     		adds	r3, r3, #59
+ 133 0014 9BB2     		uxth	r3, r3
+ 134              		.loc 1 98 6 view .LVU25
+ 135 0016 3A2B     		cmp	r3, #58
+ 136 0018 03D8     		bhi	.L10
+  99:Core/Src/robot.c ****     pwm = -MOTOR_MIN_PWM;
+ 137              		.loc 1 99 9 view .LVU26
+ 138 001a 6FF03B00 		mvn	r0, #59
+ 139              	.LVL13:
+ 140              		.loc 1 99 9 view .LVU27
+ 141 001e 03E0     		b	.L11
+ 142              	.LVL14:
+ 143              	.L13:
+  97:Core/Src/robot.c ****     pwm = MOTOR_MIN_PWM;
+ 144              		.loc 1 97 9 view .LVU28
+ 145 0020 3C20     		movs	r0, #60
+ 146              	.LVL15:
+ 147              	.L10:
+ 100:Core/Src/robot.c ****   /* Clamp to valid range */
+ 101:Core/Src/robot.c ****   if (pwm > 1000)
+ 148              		.loc 1 101 3 is_stmt 1 view .LVU29
+ 149              		.loc 1 101 6 is_stmt 0 view .LVU30
+ 150 0022 B0F57A7F 		cmp	r0, #1000
+ 151 0026 03DC     		bgt	.L18
+ 152              	.LVL16:
+ 153              	.L11:
+ 102:Core/Src/robot.c ****     pwm = 1000;
+ 103:Core/Src/robot.c ****   if (pwm < -1000)
+ 154              		.loc 1 103 3 is_stmt 1 view .LVU31
+ 155              		.loc 1 103 6 is_stmt 0 view .LVU32
+ 156 0028 10F57A7F 		cmn	r0, #1000
+ 157 002c 03DB     		blt	.L19
+ 158              	.LVL17:
+ 159              	.L12:
+ 104:Core/Src/robot.c ****     pwm = -1000;
+ 105:Core/Src/robot.c ****   return pwm;
+ 160              		.loc 1 105 3 is_stmt 1 view .LVU33
+ 106:Core/Src/robot.c **** }
+ 161              		.loc 1 106 1 is_stmt 0 view .LVU34
+ 162 002e 08BD     		pop	{r3, pc}
+ 163              	.L18:
+ 102:Core/Src/robot.c ****     pwm = 1000;
+ 164              		.loc 1 102 9 view .LVU35
+ 165 0030 4FF47A70 		mov	r0, #1000
+ 166              	.LVL18:
+ 102:Core/Src/robot.c ****     pwm = 1000;
+ 167              		.loc 1 102 9 view .LVU36
+ 168 0034 FBE7     		b	.L12
+ 169              	.LVL19:
+ 170              	.L19:
+ 104:Core/Src/robot.c ****     pwm = -1000;
+ 171              		.loc 1 104 9 view .LVU37
+ 172 0036 0148     		ldr	r0, .L20
+ 173              	.LVL20:
+ 104:Core/Src/robot.c ****     pwm = -1000;
+ 174              		.loc 1 104 9 view .LVU38
+ 175 0038 F9E7     		b	.L12
+ARM GAS  /tmp/ccT2cdC7.s 			page 6
+
+
+ 176              	.L21:
+ 177 003a 00BF     		.align	2
+ 178              	.L20:
+ 179 003c 18FCFFFF 		.word	-1000
+ 180              		.cfi_endproc
+ 181              	.LFE66:
+ 183              		.section	.text.Robot_Init,"ax",%progbits
+ 184              		.align	1
+ 185              		.global	Robot_Init
+ 186              		.syntax unified
+ 187              		.thumb
+ 188              		.thumb_func
+ 190              	Robot_Init:
+ 191              	.LVL21:
+ 192              	.LFB67:
+ 107:Core/Src/robot.c **** 
+ 108:Core/Src/robot.c **** /* ========================== Init ======================================== */
+ 109:Core/Src/robot.c **** 
+ 110:Core/Src/robot.c **** void Robot_Init(I2C_HandleTypeDef *hi2c) {
+ 193              		.loc 1 110 42 is_stmt 1 view -0
+ 194              		.cfi_startproc
+ 195              		@ args = 0, pretend = 0, frame = 0
+ 196              		@ frame_needed = 0, uses_anonymous_args = 0
+ 197              		.loc 1 110 42 is_stmt 0 view .LVU40
+ 198 0000 2DE9F043 		push	{r4, r5, r6, r7, r8, r9, lr}
+ 199              	.LCFI2:
+ 200              		.cfi_def_cfa_offset 28
+ 201              		.cfi_offset 4, -28
+ 202              		.cfi_offset 5, -24
+ 203              		.cfi_offset 6, -20
+ 204              		.cfi_offset 7, -16
+ 205              		.cfi_offset 8, -12
+ 206              		.cfi_offset 9, -8
+ 207              		.cfi_offset 14, -4
+ 208 0004 85B0     		sub	sp, sp, #20
+ 209              	.LCFI3:
+ 210              		.cfi_def_cfa_offset 48
+ 211 0006 0446     		mov	r4, r0
+ 111:Core/Src/robot.c ****   /* Init subsystems */
+ 112:Core/Src/robot.c ****   Motor_Init();
+ 212              		.loc 1 112 3 is_stmt 1 view .LVU41
+ 213 0008 FFF7FEFF 		bl	Motor_Init
+ 214              	.LVL22:
+ 113:Core/Src/robot.c ****   Encoder_Init();
+ 215              		.loc 1 113 3 view .LVU42
+ 216 000c FFF7FEFF 		bl	Encoder_Init
+ 217              	.LVL23:
+ 114:Core/Src/robot.c **** 
+ 115:Core/Src/robot.c ****   /* Init IMU */
+ 116:Core/Src/robot.c ****   MPU6050_Init(&robot.imu, hi2c);
+ 218              		.loc 1 116 3 view .LVU43
+ 219 0010 294D     		ldr	r5, .L24
+ 220 0012 2146     		mov	r1, r4
+ 221 0014 2846     		mov	r0, r5
+ 222 0016 FFF7FEFF 		bl	MPU6050_Init
+ 223              	.LVL24:
+ 117:Core/Src/robot.c ****   MPU6050_CalibrateGyro(&robot.imu); /* ~2 seconds — robot must be still! */
+ARM GAS  /tmp/ccT2cdC7.s 			page 7
+
+
+ 224              		.loc 1 117 3 view .LVU44
+ 225 001a 2846     		mov	r0, r5
+ 226 001c FFF7FEFF 		bl	MPU6050_CalibrateGyro
+ 227              	.LVL25:
+ 118:Core/Src/robot.c **** 
+ 119:Core/Src/robot.c ****   /* Init PIDs */
+ 120:Core/Src/robot.c ****   PID_Init(&robot.pid_heading, HEADING_KP, HEADING_KI, HEADING_KD, CONTROL_DT,
+ 228              		.loc 1 120 3 view .LVU45
+ 229 0020 264B     		ldr	r3, .L24+4
+ 230 0022 0293     		str	r3, [sp, #8]	@ float
+ 231 0024 264B     		ldr	r3, .L24+8
+ 232 0026 0193     		str	r3, [sp, #4]	@ float
+ 233 0028 264F     		ldr	r7, .L24+12
+ 234 002a 0097     		str	r7, [sp]	@ float
+ 235 002c 264B     		ldr	r3, .L24+16
+ 236 002e 274A     		ldr	r2, .L24+20
+ 237 0030 4FF08141 		mov	r1, #1082130432
+ 238 0034 05F12000 		add	r0, r5, #32
+ 239 0038 FFF7FEFF 		bl	PID_Init
+ 240              	.LVL26:
+ 121:Core/Src/robot.c ****            -HEADING_OUT_MAX, HEADING_OUT_MAX);
+ 122:Core/Src/robot.c **** 
+ 123:Core/Src/robot.c ****   PID_Init(&robot.pid_speed_left, SPEED_KP, SPEED_KI, SPEED_KD, CONTROL_DT,
+ 241              		.loc 1 123 3 view .LVU46
+ 242 003c 0024     		movs	r4, #0
+ 243              	.LVL27:
+ 244              		.loc 1 123 3 is_stmt 0 view .LVU47
+ 245 003e 4FF07C56 		mov	r6, #1056964608
+ 246 0042 DFF88C90 		ldr	r9, .L24+24
+ 247 0046 CDF80890 		str	r9, [sp, #8]	@ float
+ 248 004a DFF88880 		ldr	r8, .L24+28
+ 249 004e CDF80480 		str	r8, [sp, #4]	@ float
+ 250 0052 0097     		str	r7, [sp]	@ float
+ 251 0054 2346     		mov	r3, r4
+ 252 0056 3246     		mov	r2, r6
+ 253 0058 3146     		mov	r1, r6
+ 254 005a 05F14400 		add	r0, r5, #68
+ 255 005e FFF7FEFF 		bl	PID_Init
+ 256              	.LVL28:
+ 124:Core/Src/robot.c ****            -SPEED_OUT_MAX, SPEED_OUT_MAX);
+ 125:Core/Src/robot.c **** 
+ 126:Core/Src/robot.c ****   PID_Init(&robot.pid_speed_right, SPEED_KP, SPEED_KI, SPEED_KD, CONTROL_DT,
+ 257              		.loc 1 126 3 is_stmt 1 view .LVU48
+ 258 0062 CDF80890 		str	r9, [sp, #8]	@ float
+ 259 0066 CDF80480 		str	r8, [sp, #4]	@ float
+ 260 006a 0097     		str	r7, [sp]	@ float
+ 261 006c 2346     		mov	r3, r4
+ 262 006e 3246     		mov	r2, r6
+ 263 0070 3146     		mov	r1, r6
+ 264 0072 05F16800 		add	r0, r5, #104
+ 265 0076 FFF7FEFF 		bl	PID_Init
+ 266              	.LVL29:
+ 127:Core/Src/robot.c ****            -SPEED_OUT_MAX, SPEED_OUT_MAX);
+ 128:Core/Src/robot.c **** 
+ 129:Core/Src/robot.c ****   /* Init state */
+ 130:Core/Src/robot.c ****   robot.state = ROBOT_STATE_IDLE;
+ 267              		.loc 1 130 3 view .LVU49
+ARM GAS  /tmp/ccT2cdC7.s 			page 8
+
+
+ 268              		.loc 1 130 15 is_stmt 0 view .LVU50
+ 269 007a 0022     		movs	r2, #0
+ 270 007c 05F8042C 		strb	r2, [r5, #-4]
+ 131:Core/Src/robot.c ****   robot.target_heading = 0.0f;
+ 271              		.loc 1 131 3 is_stmt 1 view .LVU51
+ 272              		.loc 1 131 24 is_stmt 0 view .LVU52
+ 273 0080 C5F88C40 		str	r4, [r5, #140]	@ float
+ 132:Core/Src/robot.c ****   robot.target_speed = 0.0f;
+ 274              		.loc 1 132 3 is_stmt 1 view .LVU53
+ 275              		.loc 1 132 22 is_stmt 0 view .LVU54
+ 276 0084 C5F89040 		str	r4, [r5, #144]	@ float
+ 133:Core/Src/robot.c ****   robot.target_angular_vel = 0.0f;
+ 277              		.loc 1 133 3 is_stmt 1 view .LVU55
+ 278              		.loc 1 133 28 is_stmt 0 view .LVU56
+ 279 0088 C5F89440 		str	r4, [r5, #148]	@ float
+ 134:Core/Src/robot.c ****   robot.pwm_left = 0;
+ 280              		.loc 1 134 3 is_stmt 1 view .LVU57
+ 281              		.loc 1 134 18 is_stmt 0 view .LVU58
+ 282 008c A5F89820 		strh	r2, [r5, #152]	@ movhi
+ 135:Core/Src/robot.c ****   robot.pwm_right = 0;
+ 283              		.loc 1 135 3 is_stmt 1 view .LVU59
+ 284              		.loc 1 135 19 is_stmt 0 view .LVU60
+ 285 0090 A5F89A20 		strh	r2, [r5, #154]	@ movhi
+ 136:Core/Src/robot.c ****   robot.rotation_done = 1;
+ 286              		.loc 1 136 3 is_stmt 1 view .LVU61
+ 287              		.loc 1 136 23 is_stmt 0 view .LVU62
+ 288 0094 0122     		movs	r2, #1
+ 289 0096 85F8A020 		strb	r2, [r5, #160]
+ 137:Core/Src/robot.c ****   robot.odom_x_mm = 0.0f;
+ 290              		.loc 1 137 3 is_stmt 1 view .LVU63
+ 291              		.loc 1 137 19 is_stmt 0 view .LVU64
+ 292 009a C5F8A440 		str	r4, [r5, #164]	@ float
+ 138:Core/Src/robot.c ****   robot.odom_y_mm = 0.0f;
+ 293              		.loc 1 138 3 is_stmt 1 view .LVU65
+ 294              		.loc 1 138 19 is_stmt 0 view .LVU66
+ 295 009e C5F8A840 		str	r4, [r5, #168]	@ float
+ 139:Core/Src/robot.c ****   robot.total_distance_mm = 0.0f;
+ 296              		.loc 1 139 3 is_stmt 1 view .LVU67
+ 297              		.loc 1 139 27 is_stmt 0 view .LVU68
+ 298 00a2 C5F8AC40 		str	r4, [r5, #172]	@ float
+ 140:Core/Src/robot.c ****   filtered_speed_left = 0.0f;
+ 299              		.loc 1 140 3 is_stmt 1 view .LVU69
+ 300              		.loc 1 140 23 is_stmt 0 view .LVU70
+ 301 00a6 0C4B     		ldr	r3, .L24+32
+ 302 00a8 1C60     		str	r4, [r3]	@ float
+ 141:Core/Src/robot.c ****   filtered_speed_right = 0.0f;
+ 303              		.loc 1 141 3 is_stmt 1 view .LVU71
+ 304              		.loc 1 141 24 is_stmt 0 view .LVU72
+ 305 00aa 0C4B     		ldr	r3, .L24+36
+ 306 00ac 1C60     		str	r4, [r3]	@ float
+ 142:Core/Src/robot.c **** 
+ 143:Core/Src/robot.c ****   Motor_Enable();
+ 307              		.loc 1 143 3 is_stmt 1 view .LVU73
+ 308 00ae FFF7FEFF 		bl	Motor_Enable
+ 309              	.LVL30:
+ 144:Core/Src/robot.c **** }
+ 310              		.loc 1 144 1 is_stmt 0 view .LVU74
+ARM GAS  /tmp/ccT2cdC7.s 			page 9
+
+
+ 311 00b2 05B0     		add	sp, sp, #20
+ 312              	.LCFI4:
+ 313              		.cfi_def_cfa_offset 28
+ 314              		@ sp needed
+ 315 00b4 BDE8F083 		pop	{r4, r5, r6, r7, r8, r9, pc}
+ 316              	.L25:
+ 317              		.align	2
+ 318              	.L24:
+ 319 00b8 04000000 		.word	robot+4
+ 320 00bc 00001643 		.word	1125515264
+ 321 00c0 000016C3 		.word	-1021968384
+ 322 00c4 0AD7A33B 		.word	1000593162
+ 323 00c8 0AD7A33C 		.word	1017370378
+ 324 00cc 9A99993E 		.word	1050253722
+ 325 00d0 0000C843 		.word	1137180672
+ 326 00d4 0000C8C3 		.word	-1010302976
+ 327 00d8 00000000 		.word	filtered_speed_left
+ 328 00dc 00000000 		.word	filtered_speed_right
+ 329              		.cfi_endproc
+ 330              	.LFE67:
+ 332              		.section	.text.Robot_Update,"ax",%progbits
+ 333              		.align	1
+ 334              		.global	Robot_Update
+ 335              		.syntax unified
+ 336              		.thumb
+ 337              		.thumb_func
+ 339              	Robot_Update:
+ 340              	.LFB68:
+ 145:Core/Src/robot.c **** 
+ 146:Core/Src/robot.c **** /* ========================== Control loop ================================ */
+ 147:Core/Src/robot.c **** 
+ 148:Core/Src/robot.c **** void Robot_Update(void) {
+ 341              		.loc 1 148 25 is_stmt 1 view -0
+ 342              		.cfi_startproc
+ 343              		@ args = 0, pretend = 0, frame = 0
+ 344              		@ frame_needed = 0, uses_anonymous_args = 0
+ 345 0000 2DE9F843 		push	{r3, r4, r5, r6, r7, r8, r9, lr}
+ 346              	.LCFI5:
+ 347              		.cfi_def_cfa_offset 32
+ 348              		.cfi_offset 3, -32
+ 349              		.cfi_offset 4, -28
+ 350              		.cfi_offset 5, -24
+ 351              		.cfi_offset 6, -20
+ 352              		.cfi_offset 7, -16
+ 353              		.cfi_offset 8, -12
+ 354              		.cfi_offset 9, -8
+ 355              		.cfi_offset 14, -4
+ 149:Core/Src/robot.c ****   /* Step 1: Read IMU — integrate heading */
+ 150:Core/Src/robot.c ****   MPU6050_Update(&robot.imu, CONTROL_DT);
+ 356              		.loc 1 150 3 view .LVU76
+ 357 0004 A54F     		ldr	r7, .L51
+ 358 0006 A64E     		ldr	r6, .L51+4
+ 359 0008 3946     		mov	r1, r7
+ 360 000a 3046     		mov	r0, r6
+ 361 000c FFF7FEFF 		bl	MPU6050_Update
+ 362              	.LVL31:
+ 151:Core/Src/robot.c **** 
+ARM GAS  /tmp/ccT2cdC7.s 			page 10
+
+
+ 152:Core/Src/robot.c ****   /* Step 2: Read encoders + low-pass filter */
+ 153:Core/Src/robot.c ****   robot.enc_delta_left = Encoder_GetDelta(ENCODER_LEFT);
+ 363              		.loc 1 153 3 view .LVU77
+ 364              		.loc 1 153 26 is_stmt 0 view .LVU78
+ 365 0010 0020     		movs	r0, #0
+ 366 0012 FFF7FEFF 		bl	Encoder_GetDelta
+ 367              	.LVL32:
+ 368              		.loc 1 153 24 discriminator 1 view .LVU79
+ 369 0016 341F     		subs	r4, r6, #4
+ 370 0018 2083     		strh	r0, [r4, #24]	@ movhi
+ 154:Core/Src/robot.c ****   robot.enc_delta_right = Encoder_GetDelta(ENCODER_RIGHT);
+ 371              		.loc 1 154 3 is_stmt 1 view .LVU80
+ 372              		.loc 1 154 27 is_stmt 0 view .LVU81
+ 373 001a 0120     		movs	r0, #1
+ 374 001c FFF7FEFF 		bl	Encoder_GetDelta
+ 375              	.LVL33:
+ 376              		.loc 1 154 25 discriminator 1 view .LVU82
+ 377 0020 6083     		strh	r0, [r4, #26]	@ movhi
+ 155:Core/Src/robot.c **** 
+ 156:Core/Src/robot.c ****   float raw_speed_left = Encoder_GetSpeed(robot.enc_delta_left, CONTROL_DT);
+ 378              		.loc 1 156 3 is_stmt 1 view .LVU83
+ 379              		.loc 1 156 26 is_stmt 0 view .LVU84
+ 380 0022 3946     		mov	r1, r7
+ 381 0024 B4F91800 		ldrsh	r0, [r4, #24]
+ 382 0028 FFF7FEFF 		bl	Encoder_GetSpeed
+ 383              	.LVL34:
+ 384 002c 0546     		mov	r5, r0
+ 385              	.LVL35:
+ 157:Core/Src/robot.c ****   float raw_speed_right = Encoder_GetSpeed(robot.enc_delta_right, CONTROL_DT);
+ 386              		.loc 1 157 3 is_stmt 1 view .LVU85
+ 387              		.loc 1 157 27 is_stmt 0 view .LVU86
+ 388 002e 3946     		mov	r1, r7
+ 389 0030 B4F91A00 		ldrsh	r0, [r4, #26]
+ 390              	.LVL36:
+ 391              		.loc 1 157 27 view .LVU87
+ 392 0034 FFF7FEFF 		bl	Encoder_GetSpeed
+ 393              	.LVL37:
+ 394 0038 0746     		mov	r7, r0
+ 395              	.LVL38:
+ 158:Core/Src/robot.c **** 
+ 159:Core/Src/robot.c ****   /* Low-pass filter: smooth out quantized encoder readings */
+ 160:Core/Src/robot.c ****   filtered_speed_left +=
+ 396              		.loc 1 160 3 is_stmt 1 view .LVU88
+ 161:Core/Src/robot.c ****       SPEED_FILTER_ALPHA * (raw_speed_left - filtered_speed_left);
+ 397              		.loc 1 161 44 is_stmt 0 view .LVU89
+ 398 003a DFF86882 		ldr	r8, .L51+8
+ 399 003e D8F80090 		ldr	r9, [r8]	@ float
+ 400 0042 4946     		mov	r1, r9
+ 401 0044 2846     		mov	r0, r5
+ 402              	.LVL39:
+ 403              		.loc 1 161 44 view .LVU90
+ 404 0046 FFF7FEFF 		bl	__aeabi_fsub
+ 405              	.LVL40:
+ 406              		.loc 1 161 26 view .LVU91
+ 407 004a 9749     		ldr	r1, .L51+12
+ 408 004c FFF7FEFF 		bl	__aeabi_fmul
+ 409              	.LVL41:
+ARM GAS  /tmp/ccT2cdC7.s 			page 11
+
+
+ 410 0050 0146     		mov	r1, r0
+ 160:Core/Src/robot.c ****       SPEED_FILTER_ALPHA * (raw_speed_left - filtered_speed_left);
+ 411              		.loc 1 160 23 view .LVU92
+ 412 0052 4846     		mov	r0, r9
+ 413 0054 FFF7FEFF 		bl	__aeabi_fadd
+ 414              	.LVL42:
+ 415 0058 0546     		mov	r5, r0
+ 416              	.LVL43:
+ 160:Core/Src/robot.c ****       SPEED_FILTER_ALPHA * (raw_speed_left - filtered_speed_left);
+ 417              		.loc 1 160 23 view .LVU93
+ 418 005a C8F80000 		str	r0, [r8]	@ float
+ 162:Core/Src/robot.c ****   filtered_speed_right +=
+ 419              		.loc 1 162 3 is_stmt 1 view .LVU94
+ 163:Core/Src/robot.c ****       SPEED_FILTER_ALPHA * (raw_speed_right - filtered_speed_right);
+ 420              		.loc 1 163 45 is_stmt 0 view .LVU95
+ 421 005e DFF84C82 		ldr	r8, .L51+16
+ 422 0062 D8F80090 		ldr	r9, [r8]	@ float
+ 423 0066 4946     		mov	r1, r9
+ 424 0068 3846     		mov	r0, r7
+ 425 006a FFF7FEFF 		bl	__aeabi_fsub
+ 426              	.LVL44:
+ 427              		.loc 1 163 26 view .LVU96
+ 428 006e 8E49     		ldr	r1, .L51+12
+ 429 0070 FFF7FEFF 		bl	__aeabi_fmul
+ 430              	.LVL45:
+ 431 0074 0146     		mov	r1, r0
+ 162:Core/Src/robot.c ****   filtered_speed_right +=
+ 432              		.loc 1 162 24 view .LVU97
+ 433 0076 4846     		mov	r0, r9
+ 434 0078 FFF7FEFF 		bl	__aeabi_fadd
+ 435              	.LVL46:
+ 436 007c C8F80000 		str	r0, [r8]	@ float
+ 164:Core/Src/robot.c **** 
+ 165:Core/Src/robot.c ****   robot.speed_left = filtered_speed_left;
+ 437              		.loc 1 165 3 is_stmt 1 view .LVU98
+ 438              		.loc 1 165 20 is_stmt 0 view .LVU99
+ 439 0080 E561     		str	r5, [r4, #28]	@ float
+ 166:Core/Src/robot.c ****   robot.speed_right = filtered_speed_right;
+ 440              		.loc 1 166 3 is_stmt 1 view .LVU100
+ 441              		.loc 1 166 21 is_stmt 0 view .LVU101
+ 442 0082 2062     		str	r0, [r4, #32]	@ float
+ 167:Core/Src/robot.c **** 
+ 168:Core/Src/robot.c ****   /* Step 3: Update odometry */
+ 169:Core/Src/robot.c ****   float dl = Encoder_TicksToMM(robot.enc_delta_left);
+ 443              		.loc 1 169 3 is_stmt 1 view .LVU102
+ 444              		.loc 1 169 14 is_stmt 0 view .LVU103
+ 445 0084 B4F91800 		ldrsh	r0, [r4, #24]
+ 446 0088 FFF7FEFF 		bl	Encoder_TicksToMM
+ 447              	.LVL47:
+ 448 008c 0546     		mov	r5, r0
+ 449              	.LVL48:
+ 170:Core/Src/robot.c ****   float dr = Encoder_TicksToMM(robot.enc_delta_right);
+ 450              		.loc 1 170 3 is_stmt 1 view .LVU104
+ 451              		.loc 1 170 14 is_stmt 0 view .LVU105
+ 452 008e B4F91A00 		ldrsh	r0, [r4, #26]
+ 453              	.LVL49:
+ 454              		.loc 1 170 14 view .LVU106
+ARM GAS  /tmp/ccT2cdC7.s 			page 12
+
+
+ 455 0092 FFF7FEFF 		bl	Encoder_TicksToMM
+ 456              	.LVL50:
+ 457 0096 0146     		mov	r1, r0
+ 458              	.LVL51:
+ 171:Core/Src/robot.c ****   float dc = (dl + dr) / 2.0f;
+ 459              		.loc 1 171 3 is_stmt 1 view .LVU107
+ 460              		.loc 1 171 18 is_stmt 0 view .LVU108
+ 461 0098 2846     		mov	r0, r5
+ 462              	.LVL52:
+ 463              		.loc 1 171 18 view .LVU109
+ 464 009a FFF7FEFF 		bl	__aeabi_fadd
+ 465              	.LVL53:
+ 466              		.loc 1 171 9 view .LVU110
+ 467 009e 4FF07C51 		mov	r1, #1056964608
+ 468 00a2 FFF7FEFF 		bl	__aeabi_fmul
+ 469              	.LVL54:
+ 470 00a6 0546     		mov	r5, r0
+ 471              	.LVL55:
+ 172:Core/Src/robot.c ****   float heading_rad = robot.imu.heading_deg * (3.14159265f / 180.0f);
+ 472              		.loc 1 172 3 is_stmt 1 view .LVU111
+ 473              		.loc 1 172 32 is_stmt 0 view .LVU112
+ 474 00a8 D4F80C80 		ldr	r8, [r4, #12]	@ float
+ 475              		.loc 1 172 9 view .LVU113
+ 476 00ac 8049     		ldr	r1, .L51+20
+ 477 00ae 4046     		mov	r0, r8
+ 478              	.LVL56:
+ 479              		.loc 1 172 9 view .LVU114
+ 480 00b0 FFF7FEFF 		bl	__aeabi_fmul
+ 481              	.LVL57:
+ 482 00b4 0746     		mov	r7, r0
+ 483              	.LVL58:
+ 173:Core/Src/robot.c ****   robot.odom_x_mm += dc * cosf(heading_rad);
+ 484              		.loc 1 173 3 is_stmt 1 view .LVU115
+ 485              		.loc 1 173 8 is_stmt 0 view .LVU116
+ 486 00b6 D4F8A890 		ldr	r9, [r4, #168]	@ float
+ 487              		.loc 1 173 27 view .LVU117
+ 488 00ba FFF7FEFF 		bl	cosf
+ 489              	.LVL59:
+ 490              		.loc 1 173 25 discriminator 1 view .LVU118
+ 491 00be 2946     		mov	r1, r5
+ 492 00c0 FFF7FEFF 		bl	__aeabi_fmul
+ 493              	.LVL60:
+ 494 00c4 0146     		mov	r1, r0
+ 495              		.loc 1 173 19 discriminator 1 view .LVU119
+ 496 00c6 4846     		mov	r0, r9
+ 497 00c8 FFF7FEFF 		bl	__aeabi_fadd
+ 498              	.LVL61:
+ 499 00cc C4F8A800 		str	r0, [r4, #168]	@ float
+ 174:Core/Src/robot.c ****   robot.odom_y_mm += dc * sinf(heading_rad);
+ 500              		.loc 1 174 3 is_stmt 1 view .LVU120
+ 501              		.loc 1 174 8 is_stmt 0 view .LVU121
+ 502 00d0 D4F8AC90 		ldr	r9, [r4, #172]	@ float
+ 503              		.loc 1 174 27 view .LVU122
+ 504 00d4 3846     		mov	r0, r7
+ 505 00d6 FFF7FEFF 		bl	sinf
+ 506              	.LVL62:
+ 507              		.loc 1 174 25 discriminator 1 view .LVU123
+ARM GAS  /tmp/ccT2cdC7.s 			page 13
+
+
+ 508 00da 2946     		mov	r1, r5
+ 509 00dc FFF7FEFF 		bl	__aeabi_fmul
+ 510              	.LVL63:
+ 511 00e0 0146     		mov	r1, r0
+ 512              		.loc 1 174 19 discriminator 1 view .LVU124
+ 513 00e2 4846     		mov	r0, r9
+ 514 00e4 FFF7FEFF 		bl	__aeabi_fadd
+ 515              	.LVL64:
+ 516 00e8 C4F8AC00 		str	r0, [r4, #172]	@ float
+ 175:Core/Src/robot.c ****   robot.total_distance_mm += fabsf(dc);
+ 517              		.loc 1 175 3 is_stmt 1 view .LVU125
+ 518              		.loc 1 175 30 is_stmt 0 view .LVU126
+ 519 00ec 25F00041 		bic	r1, r5, #-2147483648
+ 520              		.loc 1 175 27 view .LVU127
+ 521 00f0 D4F8B000 		ldr	r0, [r4, #176]	@ float
+ 522 00f4 FFF7FEFF 		bl	__aeabi_fadd
+ 523              	.LVL65:
+ 524 00f8 C4F8B000 		str	r0, [r4, #176]	@ float
+ 176:Core/Src/robot.c **** 
+ 177:Core/Src/robot.c ****   /* Step 4: State machine */
+ 178:Core/Src/robot.c ****   switch (robot.state) {
+ 525              		.loc 1 178 3 is_stmt 1 view .LVU128
+ 526              		.loc 1 178 16 is_stmt 0 view .LVU129
+ 527 00fc 16F8043C 		ldrb	r3, [r6, #-4]	@ zero_extendqisi2
+ 528              		.loc 1 178 3 view .LVU130
+ 529 0100 032B     		cmp	r3, #3
+ 530 0102 17D8     		bhi	.L26
+ 531 0104 DFE813F0 		tbh	[pc, r3, lsl #1]
+ 532              	.L29:
+ 533 0108 0400     		.2byte	(.L32-.L29)/2
+ 534 010a 1800     		.2byte	(.L31-.L29)/2
+ 535 010c 9800     		.2byte	(.L30-.L29)/2
+ 536 010e 2101     		.2byte	(.L28-.L29)/2
+ 537              		.p2align 1
+ 538              	.L32:
+ 179:Core/Src/robot.c ****   case ROBOT_STATE_IDLE:
+ 180:Core/Src/robot.c ****     /* Reset filter and ramp when stopped to prevent lag on restart */
+ 181:Core/Src/robot.c ****     filtered_speed_left = 0.0f;
+ 539              		.loc 1 181 5 is_stmt 1 view .LVU131
+ 540              		.loc 1 181 25 is_stmt 0 view .LVU132
+ 541 0110 0023     		movs	r3, #0
+ 542 0112 644A     		ldr	r2, .L51+8
+ 543 0114 1360     		str	r3, [r2]	@ float
+ 182:Core/Src/robot.c ****     filtered_speed_right = 0.0f;
+ 544              		.loc 1 182 5 is_stmt 1 view .LVU133
+ 545              		.loc 1 182 26 is_stmt 0 view .LVU134
+ 546 0116 654A     		ldr	r2, .L51+16
+ 547 0118 1360     		str	r3, [r2]	@ float
+ 183:Core/Src/robot.c ****     ramped_speed = 0.0f;
+ 548              		.loc 1 183 5 is_stmt 1 view .LVU135
+ 549              		.loc 1 183 18 is_stmt 0 view .LVU136
+ 550 011a 664A     		ldr	r2, .L51+24
+ 551 011c 1360     		str	r3, [r2]	@ float
+ 184:Core/Src/robot.c ****     Motor_SetSpeed(MOTOR_LEFT, 0);
+ 552              		.loc 1 184 5 is_stmt 1 view .LVU137
+ 553 011e 0021     		movs	r1, #0
+ 554 0120 0846     		mov	r0, r1
+ARM GAS  /tmp/ccT2cdC7.s 			page 14
+
+
+ 555 0122 FFF7FEFF 		bl	Motor_SetSpeed
+ 556              	.LVL66:
+ 185:Core/Src/robot.c ****     Motor_SetSpeed(MOTOR_RIGHT, 0);
+ 557              		.loc 1 185 5 view .LVU138
+ 558 0126 0021     		movs	r1, #0
+ 559 0128 0120     		movs	r0, #1
+ 560 012a FFF7FEFF 		bl	Motor_SetSpeed
+ 561              	.LVL67:
+ 186:Core/Src/robot.c **** 
+ 187:Core/Src/robot.c ****     /* Auto-recalibrate gyro bias while stationary.
+ 188:Core/Src/robot.c ****      * This corrects thermal drift that causes heading errors over time.
+ 189:Core/Src/robot.c ****      * EMA with alpha=0.001 → bias converges in ~5-10 seconds idle. */
+ 190:Core/Src/robot.c ****     MPU6050_RecalibrateBias(&robot.imu);
+ 562              		.loc 1 190 5 view .LVU139
+ 563 012e 5C48     		ldr	r0, .L51+4
+ 564 0130 FFF7FEFF 		bl	MPU6050_RecalibrateBias
+ 565              	.LVL68:
+ 191:Core/Src/robot.c ****     break;
+ 566              		.loc 1 191 5 view .LVU140
+ 567              	.L26:
+ 192:Core/Src/robot.c **** 
+ 193:Core/Src/robot.c ****   case ROBOT_STATE_MOVING: {
+ 194:Core/Src/robot.c ****     /* Speed ramp-up: smoothly approach target speed */
+ 195:Core/Src/robot.c ****     if (ramped_speed < robot.target_speed) {
+ 196:Core/Src/robot.c ****       ramped_speed += SPEED_RAMP_RATE * CONTROL_DT;
+ 197:Core/Src/robot.c ****       if (ramped_speed > robot.target_speed)
+ 198:Core/Src/robot.c ****         ramped_speed = robot.target_speed;
+ 199:Core/Src/robot.c ****     } else if (ramped_speed > robot.target_speed) {
+ 200:Core/Src/robot.c ****       ramped_speed -= SPEED_RAMP_RATE * CONTROL_DT;
+ 201:Core/Src/robot.c ****       if (ramped_speed < robot.target_speed)
+ 202:Core/Src/robot.c ****         ramped_speed = robot.target_speed;
+ 203:Core/Src/robot.c ****     }
+ 204:Core/Src/robot.c **** 
+ 205:Core/Src/robot.c ****     /* Heading PID: correct for drift */
+ 206:Core/Src/robot.c ****     float heading_error =
+ 207:Core/Src/robot.c ****         angle_diff(robot.target_heading, robot.imu.heading_deg);
+ 208:Core/Src/robot.c ****     float heading_correction =
+ 209:Core/Src/robot.c ****         PID_Compute(&robot.pid_heading, 0.0f, -heading_error);
+ 210:Core/Src/robot.c **** 
+ 211:Core/Src/robot.c ****     /* Speed setpoints: ramped base ± heading correction */
+ 212:Core/Src/robot.c ****     float sp_left = ramped_speed + heading_correction;
+ 213:Core/Src/robot.c ****     float sp_right = ramped_speed - heading_correction;
+ 214:Core/Src/robot.c **** 
+ 215:Core/Src/robot.c ****     /* Feedforward: per-wheel gains compensate motor asymmetry */
+ 216:Core/Src/robot.c ****     float ff_l = sp_left * ff_gain_left;
+ 217:Core/Src/robot.c ****     float ff_r = sp_right * ff_gain_right;
+ 218:Core/Src/robot.c **** 
+ 219:Core/Src/robot.c ****     /* Speed PID: correct residual error only */
+ 220:Core/Src/robot.c ****     float pid_left =
+ 221:Core/Src/robot.c ****         PID_Compute(&robot.pid_speed_left, sp_left, robot.speed_left);
+ 222:Core/Src/robot.c ****     float pid_right =
+ 223:Core/Src/robot.c ****         PID_Compute(&robot.pid_speed_right, sp_right, robot.speed_right);
+ 224:Core/Src/robot.c **** 
+ 225:Core/Src/robot.c ****     /* Total output = feedforward + PID correction */
+ 226:Core/Src/robot.c ****     float out_left = ff_l + pid_left;
+ 227:Core/Src/robot.c ****     float out_right = ff_r + pid_right;
+ 228:Core/Src/robot.c **** 
+ARM GAS  /tmp/ccT2cdC7.s 			page 15
+
+
+ 229:Core/Src/robot.c ****     robot.pwm_left = apply_deadzone(out_left);
+ 230:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(out_right);
+ 231:Core/Src/robot.c **** 
+ 232:Core/Src/robot.c ****     Motor_SetSpeed(MOTOR_LEFT, robot.pwm_left);
+ 233:Core/Src/robot.c ****     Motor_SetSpeed(MOTOR_RIGHT, robot.pwm_right);
+ 234:Core/Src/robot.c ****     break;
+ 235:Core/Src/robot.c ****   }
+ 236:Core/Src/robot.c **** 
+ 237:Core/Src/robot.c ****   case ROBOT_STATE_ROTATING: {
+ 238:Core/Src/robot.c ****     /* Heading error to target angle */
+ 239:Core/Src/robot.c ****     float heading_error =
+ 240:Core/Src/robot.c ****         angle_diff(robot.rotation_target, robot.imu.heading_deg);
+ 241:Core/Src/robot.c ****     static int settle_count = 0;
+ 242:Core/Src/robot.c **** 
+ 243:Core/Src/robot.c ****     if (fabsf(heading_error) < ROTATION_TOLERANCE_DEG) {
+ 244:Core/Src/robot.c ****       settle_count++;
+ 245:Core/Src/robot.c ****       if (settle_count >= ROTATION_SETTLE_COUNT) {
+ 246:Core/Src/robot.c ****         /* Rotation complete */
+ 247:Core/Src/robot.c ****         Motor_SetSpeed(MOTOR_LEFT, 0);
+ 248:Core/Src/robot.c ****         Motor_SetSpeed(MOTOR_RIGHT, 0);
+ 249:Core/Src/robot.c ****         robot.rotation_done = 1;
+ 250:Core/Src/robot.c ****         robot.state = ROBOT_STATE_IDLE;
+ 251:Core/Src/robot.c ****         settle_count = 0;
+ 252:Core/Src/robot.c ****         PID_Reset(&robot.pid_heading);
+ 253:Core/Src/robot.c ****         PID_Reset(&robot.pid_speed_left);
+ 254:Core/Src/robot.c ****         PID_Reset(&robot.pid_speed_right);
+ 255:Core/Src/robot.c ****         break;
+ 256:Core/Src/robot.c ****       }
+ 257:Core/Src/robot.c ****     } else {
+ 258:Core/Src/robot.c ****       settle_count = 0;
+ 259:Core/Src/robot.c ****     }
+ 260:Core/Src/robot.c **** 
+ 261:Core/Src/robot.c ****     /* PID on heading error → rotation speed */
+ 262:Core/Src/robot.c ****     float rot_output = PID_Compute(&robot.pid_heading, 0.0f, -heading_error);
+ 263:Core/Src/robot.c **** 
+ 264:Core/Src/robot.c ****     /* Feedforward for rotation */
+ 265:Core/Src/robot.c ****     float ff_left = rot_output * SPEED_FF_GAIN;
+ 266:Core/Src/robot.c ****     float ff_right = -rot_output * SPEED_FF_GAIN;
+ 267:Core/Src/robot.c **** 
+ 268:Core/Src/robot.c ****     /* Speed PID per wheel */
+ 269:Core/Src/robot.c ****     float pid_left =
+ 270:Core/Src/robot.c ****         PID_Compute(&robot.pid_speed_left, rot_output, robot.speed_left);
+ 271:Core/Src/robot.c ****     float pid_right =
+ 272:Core/Src/robot.c ****         PID_Compute(&robot.pid_speed_right, -rot_output, robot.speed_right);
+ 273:Core/Src/robot.c **** 
+ 274:Core/Src/robot.c ****     robot.pwm_left = apply_deadzone(ff_left + pid_left);
+ 275:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(ff_right + pid_right);
+ 276:Core/Src/robot.c **** 
+ 277:Core/Src/robot.c ****     Motor_SetSpeed(MOTOR_LEFT, robot.pwm_left);
+ 278:Core/Src/robot.c ****     Motor_SetSpeed(MOTOR_RIGHT, robot.pwm_right);
+ 279:Core/Src/robot.c ****     break;
+ 280:Core/Src/robot.c ****   }
+ 281:Core/Src/robot.c **** 
+ 282:Core/Src/robot.c ****   case ROBOT_STATE_ESTOP:
+ 283:Core/Src/robot.c ****     Motor_Brake();
+ 284:Core/Src/robot.c ****     break;
+ 285:Core/Src/robot.c ****   }
+ARM GAS  /tmp/ccT2cdC7.s 			page 16
+
+
+ 286:Core/Src/robot.c **** }
+ 568              		.loc 1 286 1 is_stmt 0 view .LVU141
+ 569 0134 BDE8F883 		pop	{r3, r4, r5, r6, r7, r8, r9, pc}
+ 570              	.LVL69:
+ 571              	.L31:
+ 572              	.LBB2:
+ 195:Core/Src/robot.c ****       ramped_speed += SPEED_RAMP_RATE * CONTROL_DT;
+ 573              		.loc 1 195 5 is_stmt 1 view .LVU142
+ 195:Core/Src/robot.c ****       ramped_speed += SPEED_RAMP_RATE * CONTROL_DT;
+ 574              		.loc 1 195 29 is_stmt 0 view .LVU143
+ 575 0138 5F4B     		ldr	r3, .L51+28
+ 576 013a D3F89440 		ldr	r4, [r3, #148]	@ float
+ 195:Core/Src/robot.c ****       ramped_speed += SPEED_RAMP_RATE * CONTROL_DT;
+ 577              		.loc 1 195 22 view .LVU144
+ 578 013e 5D4B     		ldr	r3, .L51+24
+ 579 0140 1D68     		ldr	r5, [r3]	@ float
+ 580              	.LVL70:
+ 195:Core/Src/robot.c ****       ramped_speed += SPEED_RAMP_RATE * CONTROL_DT;
+ 581              		.loc 1 195 8 view .LVU145
+ 582 0142 2946     		mov	r1, r5
+ 583 0144 2046     		mov	r0, r4
+ 584 0146 FFF7FEFF 		bl	__aeabi_fcmpgt
+ 585              	.LVL71:
+ 586 014a 0028     		cmp	r0, #0
+ 587 014c 5FD0     		beq	.L47
+ 196:Core/Src/robot.c ****       if (ramped_speed > robot.target_speed)
+ 588              		.loc 1 196 7 is_stmt 1 view .LVU146
+ 196:Core/Src/robot.c ****       if (ramped_speed > robot.target_speed)
+ 589              		.loc 1 196 20 is_stmt 0 view .LVU147
+ 590 014e 5B49     		ldr	r1, .L51+32
+ 591 0150 2846     		mov	r0, r5
+ 592 0152 FFF7FEFF 		bl	__aeabi_fadd
+ 593              	.LVL72:
+ 594 0156 0146     		mov	r1, r0
+ 595 0158 564B     		ldr	r3, .L51+24
+ 596 015a 1860     		str	r0, [r3]	@ float
+ 197:Core/Src/robot.c ****         ramped_speed = robot.target_speed;
+ 597              		.loc 1 197 7 is_stmt 1 view .LVU148
+ 197:Core/Src/robot.c ****         ramped_speed = robot.target_speed;
+ 598              		.loc 1 197 10 is_stmt 0 view .LVU149
+ 599 015c 2046     		mov	r0, r4
+ 600 015e FFF7FEFF 		bl	__aeabi_fcmplt
+ 601              	.LVL73:
+ 602 0162 08B1     		cbz	r0, .L35
+ 198:Core/Src/robot.c ****     } else if (ramped_speed > robot.target_speed) {
+ 603              		.loc 1 198 9 is_stmt 1 view .LVU150
+ 198:Core/Src/robot.c ****     } else if (ramped_speed > robot.target_speed) {
+ 604              		.loc 1 198 22 is_stmt 0 view .LVU151
+ 605 0164 534B     		ldr	r3, .L51+24
+ 606 0166 1C60     		str	r4, [r3]	@ float
+ 607              	.L35:
+ 206:Core/Src/robot.c ****         angle_diff(robot.target_heading, robot.imu.heading_deg);
+ 608              		.loc 1 206 5 is_stmt 1 view .LVU152
+ 207:Core/Src/robot.c ****     float heading_correction =
+ 609              		.loc 1 207 9 is_stmt 0 view .LVU153
+ 610 0168 534C     		ldr	r4, .L51+28
+ 611 016a 4146     		mov	r1, r8
+ARM GAS  /tmp/ccT2cdC7.s 			page 17
+
+
+ 612 016c D4F89000 		ldr	r0, [r4, #144]	@ float
+ 613 0170 FFF7FEFF 		bl	angle_diff
+ 614              	.LVL74:
+ 208:Core/Src/robot.c ****         PID_Compute(&robot.pid_heading, 0.0f, -heading_error);
+ 615              		.loc 1 208 5 is_stmt 1 view .LVU154
+ 209:Core/Src/robot.c **** 
+ 616              		.loc 1 209 9 is_stmt 0 view .LVU155
+ 617 0174 00F10042 		add	r2, r0, #-2147483648
+ 618 0178 0021     		movs	r1, #0
+ 619 017a 04F12400 		add	r0, r4, #36
+ 620              	.LVL75:
+ 209:Core/Src/robot.c **** 
+ 621              		.loc 1 209 9 view .LVU156
+ 622 017e FFF7FEFF 		bl	PID_Compute
+ 623              	.LVL76:
+ 624 0182 0546     		mov	r5, r0
+ 625              	.LVL77:
+ 212:Core/Src/robot.c ****     float sp_right = ramped_speed - heading_correction;
+ 626              		.loc 1 212 5 is_stmt 1 view .LVU157
+ 212:Core/Src/robot.c ****     float sp_right = ramped_speed - heading_correction;
+ 627              		.loc 1 212 34 is_stmt 0 view .LVU158
+ 628 0184 4B4B     		ldr	r3, .L51+24
+ 629 0186 1F68     		ldr	r7, [r3]	@ float
+ 630              	.LVL78:
+ 212:Core/Src/robot.c ****     float sp_right = ramped_speed - heading_correction;
+ 631              		.loc 1 212 11 view .LVU159
+ 632 0188 0146     		mov	r1, r0
+ 633 018a 3846     		mov	r0, r7
+ 634              	.LVL79:
+ 212:Core/Src/robot.c ****     float sp_right = ramped_speed - heading_correction;
+ 635              		.loc 1 212 11 view .LVU160
+ 636 018c FFF7FEFF 		bl	__aeabi_fadd
+ 637              	.LVL80:
+ 212:Core/Src/robot.c ****     float sp_right = ramped_speed - heading_correction;
+ 638              		.loc 1 212 11 view .LVU161
+ 639 0190 0646     		mov	r6, r0
+ 640              	.LVL81:
+ 213:Core/Src/robot.c **** 
+ 641              		.loc 1 213 5 is_stmt 1 view .LVU162
+ 213:Core/Src/robot.c **** 
+ 642              		.loc 1 213 11 is_stmt 0 view .LVU163
+ 643 0192 2946     		mov	r1, r5
+ 644 0194 3846     		mov	r0, r7
+ 645              	.LVL82:
+ 213:Core/Src/robot.c **** 
+ 646              		.loc 1 213 11 view .LVU164
+ 647 0196 FFF7FEFF 		bl	__aeabi_fsub
+ 648              	.LVL83:
+ 649 019a 0546     		mov	r5, r0
+ 650              	.LVL84:
+ 216:Core/Src/robot.c ****     float ff_r = sp_right * ff_gain_right;
+ 651              		.loc 1 216 5 is_stmt 1 view .LVU165
+ 216:Core/Src/robot.c ****     float ff_r = sp_right * ff_gain_right;
+ 652              		.loc 1 216 11 is_stmt 0 view .LVU166
+ 653 019c 3146     		mov	r1, r6
+ 654 019e 484B     		ldr	r3, .L51+36
+ 655 01a0 1868     		ldr	r0, [r3]	@ float
+ARM GAS  /tmp/ccT2cdC7.s 			page 18
+
+
+ 656              	.LVL85:
+ 216:Core/Src/robot.c ****     float ff_r = sp_right * ff_gain_right;
+ 657              		.loc 1 216 11 view .LVU167
+ 658 01a2 FFF7FEFF 		bl	__aeabi_fmul
+ 659              	.LVL86:
+ 660 01a6 8046     		mov	r8, r0
+ 661              	.LVL87:
+ 217:Core/Src/robot.c **** 
+ 662              		.loc 1 217 5 is_stmt 1 view .LVU168
+ 217:Core/Src/robot.c **** 
+ 663              		.loc 1 217 11 is_stmt 0 view .LVU169
+ 664 01a8 2946     		mov	r1, r5
+ 665 01aa 464B     		ldr	r3, .L51+40
+ 666 01ac 1868     		ldr	r0, [r3]	@ float
+ 667              	.LVL88:
+ 217:Core/Src/robot.c **** 
+ 668              		.loc 1 217 11 view .LVU170
+ 669 01ae FFF7FEFF 		bl	__aeabi_fmul
+ 670              	.LVL89:
+ 671 01b2 0746     		mov	r7, r0
+ 672              	.LVL90:
+ 220:Core/Src/robot.c ****         PID_Compute(&robot.pid_speed_left, sp_left, robot.speed_left);
+ 673              		.loc 1 220 5 is_stmt 1 view .LVU171
+ 221:Core/Src/robot.c ****     float pid_right =
+ 674              		.loc 1 221 9 is_stmt 0 view .LVU172
+ 675 01b4 E269     		ldr	r2, [r4, #28]	@ float
+ 676 01b6 3146     		mov	r1, r6
+ 677 01b8 04F14800 		add	r0, r4, #72
+ 678              	.LVL91:
+ 221:Core/Src/robot.c ****     float pid_right =
+ 679              		.loc 1 221 9 view .LVU173
+ 680 01bc FFF7FEFF 		bl	PID_Compute
+ 681              	.LVL92:
+ 682 01c0 8146     		mov	r9, r0
+ 683              	.LVL93:
+ 222:Core/Src/robot.c ****         PID_Compute(&robot.pid_speed_right, sp_right, robot.speed_right);
+ 684              		.loc 1 222 5 is_stmt 1 view .LVU174
+ 223:Core/Src/robot.c **** 
+ 685              		.loc 1 223 9 is_stmt 0 view .LVU175
+ 686 01c2 226A     		ldr	r2, [r4, #32]	@ float
+ 687 01c4 2946     		mov	r1, r5
+ 688 01c6 04F16C00 		add	r0, r4, #108
+ 689              	.LVL94:
+ 223:Core/Src/robot.c **** 
+ 690              		.loc 1 223 9 view .LVU176
+ 691 01ca FFF7FEFF 		bl	PID_Compute
+ 692              	.LVL95:
+ 693 01ce 0646     		mov	r6, r0
+ 694              	.LVL96:
+ 226:Core/Src/robot.c ****     float out_right = ff_r + pid_right;
+ 695              		.loc 1 226 5 is_stmt 1 view .LVU177
+ 226:Core/Src/robot.c ****     float out_right = ff_r + pid_right;
+ 696              		.loc 1 226 11 is_stmt 0 view .LVU178
+ 697 01d0 4946     		mov	r1, r9
+ 698 01d2 4046     		mov	r0, r8
+ 699              	.LVL97:
+ 226:Core/Src/robot.c ****     float out_right = ff_r + pid_right;
+ARM GAS  /tmp/ccT2cdC7.s 			page 19
+
+
+ 700              		.loc 1 226 11 view .LVU179
+ 701 01d4 FFF7FEFF 		bl	__aeabi_fadd
+ 702              	.LVL98:
+ 703 01d8 0546     		mov	r5, r0
+ 704              	.LVL99:
+ 227:Core/Src/robot.c **** 
+ 705              		.loc 1 227 5 is_stmt 1 view .LVU180
+ 227:Core/Src/robot.c **** 
+ 706              		.loc 1 227 11 is_stmt 0 view .LVU181
+ 707 01da 3146     		mov	r1, r6
+ 708 01dc 3846     		mov	r0, r7
+ 709              	.LVL100:
+ 227:Core/Src/robot.c **** 
+ 710              		.loc 1 227 11 view .LVU182
+ 711 01de FFF7FEFF 		bl	__aeabi_fadd
+ 712              	.LVL101:
+ 713 01e2 0646     		mov	r6, r0
+ 714              	.LVL102:
+ 229:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(out_right);
+ 715              		.loc 1 229 5 is_stmt 1 view .LVU183
+ 229:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(out_right);
+ 716              		.loc 1 229 22 is_stmt 0 view .LVU184
+ 717 01e4 2846     		mov	r0, r5
+ 718              	.LVL103:
+ 229:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(out_right);
+ 719              		.loc 1 229 22 view .LVU185
+ 720 01e6 FFF7FEFF 		bl	apply_deadzone
+ 721              	.LVL104:
+ 722 01ea 0546     		mov	r5, r0
+ 723              	.LVL105:
+ 229:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(out_right);
+ 724              		.loc 1 229 20 discriminator 1 view .LVU186
+ 725 01ec A4F89C00 		strh	r0, [r4, #156]	@ movhi
+ 230:Core/Src/robot.c **** 
+ 726              		.loc 1 230 5 is_stmt 1 view .LVU187
+ 230:Core/Src/robot.c **** 
+ 727              		.loc 1 230 23 is_stmt 0 view .LVU188
+ 728 01f0 3046     		mov	r0, r6
+ 729 01f2 FFF7FEFF 		bl	apply_deadzone
+ 730              	.LVL106:
+ 230:Core/Src/robot.c **** 
+ 731              		.loc 1 230 21 discriminator 1 view .LVU189
+ 732 01f6 A4F89E00 		strh	r0, [r4, #158]	@ movhi
+ 232:Core/Src/robot.c ****     Motor_SetSpeed(MOTOR_RIGHT, robot.pwm_right);
+ 733              		.loc 1 232 5 is_stmt 1 view .LVU190
+ 734 01fa 2946     		mov	r1, r5
+ 735 01fc 0020     		movs	r0, #0
+ 736 01fe FFF7FEFF 		bl	Motor_SetSpeed
+ 737              	.LVL107:
+ 233:Core/Src/robot.c ****     break;
+ 738              		.loc 1 233 5 view .LVU191
+ 739 0202 B4F99E10 		ldrsh	r1, [r4, #158]
+ 740 0206 0120     		movs	r0, #1
+ 741 0208 FFF7FEFF 		bl	Motor_SetSpeed
+ 742              	.LVL108:
+ 234:Core/Src/robot.c ****   }
+ 743              		.loc 1 234 5 view .LVU192
+ARM GAS  /tmp/ccT2cdC7.s 			page 20
+
+
+ 744 020c 92E7     		b	.L26
+ 745              	.LVL109:
+ 746              	.L47:
+ 199:Core/Src/robot.c ****       ramped_speed -= SPEED_RAMP_RATE * CONTROL_DT;
+ 747              		.loc 1 199 12 view .LVU193
+ 199:Core/Src/robot.c ****       ramped_speed -= SPEED_RAMP_RATE * CONTROL_DT;
+ 748              		.loc 1 199 15 is_stmt 0 view .LVU194
+ 749 020e 2946     		mov	r1, r5
+ 750 0210 2046     		mov	r0, r4
+ 751 0212 FFF7FEFF 		bl	__aeabi_fcmplt
+ 752              	.LVL110:
+ 753 0216 0028     		cmp	r0, #0
+ 754 0218 A6D0     		beq	.L35
+ 200:Core/Src/robot.c ****       if (ramped_speed < robot.target_speed)
+ 755              		.loc 1 200 7 is_stmt 1 view .LVU195
+ 200:Core/Src/robot.c ****       if (ramped_speed < robot.target_speed)
+ 756              		.loc 1 200 20 is_stmt 0 view .LVU196
+ 757 021a 2849     		ldr	r1, .L51+32
+ 758 021c 2846     		mov	r0, r5
+ 759 021e FFF7FEFF 		bl	__aeabi_fsub
+ 760              	.LVL111:
+ 761 0222 0146     		mov	r1, r0
+ 762 0224 234B     		ldr	r3, .L51+24
+ 763 0226 1860     		str	r0, [r3]	@ float
+ 201:Core/Src/robot.c ****         ramped_speed = robot.target_speed;
+ 764              		.loc 1 201 7 is_stmt 1 view .LVU197
+ 201:Core/Src/robot.c ****         ramped_speed = robot.target_speed;
+ 765              		.loc 1 201 10 is_stmt 0 view .LVU198
+ 766 0228 2046     		mov	r0, r4
+ 767 022a FFF7FEFF 		bl	__aeabi_fcmpgt
+ 768              	.LVL112:
+ 769 022e 0028     		cmp	r0, #0
+ 770 0230 9AD0     		beq	.L35
+ 202:Core/Src/robot.c ****     }
+ 771              		.loc 1 202 9 is_stmt 1 view .LVU199
+ 202:Core/Src/robot.c ****     }
+ 772              		.loc 1 202 22 is_stmt 0 view .LVU200
+ 773 0232 204B     		ldr	r3, .L51+24
+ 774 0234 1C60     		str	r4, [r3]	@ float
+ 775 0236 97E7     		b	.L35
+ 776              	.LVL113:
+ 777              	.L30:
+ 202:Core/Src/robot.c ****     }
+ 778              		.loc 1 202 22 view .LVU201
+ 779              	.LBE2:
+ 780              	.LBB3:
+ 239:Core/Src/robot.c ****         angle_diff(robot.rotation_target, robot.imu.heading_deg);
+ 781              		.loc 1 239 5 is_stmt 1 view .LVU202
+ 240:Core/Src/robot.c ****     static int settle_count = 0;
+ 782              		.loc 1 240 9 is_stmt 0 view .LVU203
+ 783 0238 4146     		mov	r1, r8
+ 784 023a 1F4B     		ldr	r3, .L51+28
+ 785 023c D3F8A000 		ldr	r0, [r3, #160]	@ float
+ 786 0240 FFF7FEFF 		bl	angle_diff
+ 787              	.LVL114:
+ 788 0244 0446     		mov	r4, r0
+ 789              	.LVL115:
+ARM GAS  /tmp/ccT2cdC7.s 			page 21
+
+
+ 241:Core/Src/robot.c **** 
+ 790              		.loc 1 241 5 is_stmt 1 view .LVU204
+ 243:Core/Src/robot.c ****       settle_count++;
+ 791              		.loc 1 243 5 view .LVU205
+ 243:Core/Src/robot.c ****       settle_count++;
+ 792              		.loc 1 243 9 is_stmt 0 view .LVU206
+ 793 0246 20F00040 		bic	r0, r0, #-2147483648
+ 794              	.LVL116:
+ 243:Core/Src/robot.c ****       settle_count++;
+ 795              		.loc 1 243 8 view .LVU207
+ 796 024a 4FF07F51 		mov	r1, #1069547520
+ 797 024e FFF7FEFF 		bl	__aeabi_fcmplt
+ 798              	.LVL117:
+ 799 0252 0028     		cmp	r0, #0
+ 800 0254 3AD0     		beq	.L48
+ 244:Core/Src/robot.c ****       if (settle_count >= ROTATION_SETTLE_COUNT) {
+ 801              		.loc 1 244 7 is_stmt 1 view .LVU208
+ 244:Core/Src/robot.c ****       if (settle_count >= ROTATION_SETTLE_COUNT) {
+ 802              		.loc 1 244 19 is_stmt 0 view .LVU209
+ 803 0256 1C4A     		ldr	r2, .L51+44
+ 804 0258 1368     		ldr	r3, [r2]
+ 805 025a 0133     		adds	r3, r3, #1
+ 806 025c 1360     		str	r3, [r2]
+ 245:Core/Src/robot.c ****         /* Rotation complete */
+ 807              		.loc 1 245 7 is_stmt 1 view .LVU210
+ 245:Core/Src/robot.c ****         /* Rotation complete */
+ 808              		.loc 1 245 10 is_stmt 0 view .LVU211
+ 809 025e 132B     		cmp	r3, #19
+ 810 0260 37DD     		ble	.L41
+ 247:Core/Src/robot.c ****         Motor_SetSpeed(MOTOR_RIGHT, 0);
+ 811              		.loc 1 247 9 is_stmt 1 view .LVU212
+ 812 0262 0021     		movs	r1, #0
+ 813 0264 0846     		mov	r0, r1
+ 814 0266 FFF7FEFF 		bl	Motor_SetSpeed
+ 815              	.LVL118:
+ 248:Core/Src/robot.c ****         robot.rotation_done = 1;
+ 816              		.loc 1 248 9 view .LVU213
+ 817 026a 0021     		movs	r1, #0
+ 818 026c 0120     		movs	r0, #1
+ 819 026e FFF7FEFF 		bl	Motor_SetSpeed
+ 820              	.LVL119:
+ 249:Core/Src/robot.c ****         robot.state = ROBOT_STATE_IDLE;
+ 821              		.loc 1 249 9 view .LVU214
+ 249:Core/Src/robot.c ****         robot.state = ROBOT_STATE_IDLE;
+ 822              		.loc 1 249 29 is_stmt 0 view .LVU215
+ 823 0272 114C     		ldr	r4, .L51+28
+ 824              	.LVL120:
+ 249:Core/Src/robot.c ****         robot.state = ROBOT_STATE_IDLE;
+ 825              		.loc 1 249 29 view .LVU216
+ 826 0274 0123     		movs	r3, #1
+ 827 0276 84F8A430 		strb	r3, [r4, #164]
+ 250:Core/Src/robot.c ****         settle_count = 0;
+ 828              		.loc 1 250 9 is_stmt 1 view .LVU217
+ 250:Core/Src/robot.c ****         settle_count = 0;
+ 829              		.loc 1 250 21 is_stmt 0 view .LVU218
+ 830 027a 0023     		movs	r3, #0
+ 831 027c 2046     		mov	r0, r4
+ARM GAS  /tmp/ccT2cdC7.s 			page 22
+
+
+ 832 027e 00F8243B 		strb	r3, [r0], #36
+ 251:Core/Src/robot.c ****         PID_Reset(&robot.pid_heading);
+ 833              		.loc 1 251 9 is_stmt 1 view .LVU219
+ 251:Core/Src/robot.c ****         PID_Reset(&robot.pid_heading);
+ 834              		.loc 1 251 22 is_stmt 0 view .LVU220
+ 835 0282 114A     		ldr	r2, .L51+44
+ 836 0284 1360     		str	r3, [r2]
+ 252:Core/Src/robot.c ****         PID_Reset(&robot.pid_speed_left);
+ 837              		.loc 1 252 9 is_stmt 1 view .LVU221
+ 838 0286 FFF7FEFF 		bl	PID_Reset
+ 839              	.LVL121:
+ 253:Core/Src/robot.c ****         PID_Reset(&robot.pid_speed_right);
+ 840              		.loc 1 253 9 view .LVU222
+ 841 028a 04F14800 		add	r0, r4, #72
+ 842 028e FFF7FEFF 		bl	PID_Reset
+ 843              	.LVL122:
+ 254:Core/Src/robot.c ****         break;
+ 844              		.loc 1 254 9 view .LVU223
+ 845 0292 04F16C00 		add	r0, r4, #108
+ 846 0296 FFF7FEFF 		bl	PID_Reset
+ 847              	.LVL123:
+ 255:Core/Src/robot.c ****       }
+ 848              		.loc 1 255 9 view .LVU224
+ 849 029a 4BE7     		b	.L26
+ 850              	.L52:
+ 851              		.align	2
+ 852              	.L51:
+ 853 029c 0AD7A33B 		.word	1000593162
+ 854 02a0 04000000 		.word	robot+4
+ 855 02a4 00000000 		.word	filtered_speed_left
+ 856 02a8 9A99193E 		.word	1041865114
+ 857 02ac 00000000 		.word	filtered_speed_right
+ 858 02b0 35FA8E3C 		.word	1016003125
+ 859 02b4 00000000 		.word	ramped_speed
+ 860 02b8 00000000 		.word	robot
+ 861 02bc 00004040 		.word	1077936128
+ 862 02c0 00000000 		.word	ff_gain_left
+ 863 02c4 00000000 		.word	ff_gain_right
+ 864 02c8 00000000 		.word	settle_count.0
+ 865              	.LVL124:
+ 866              	.L48:
+ 258:Core/Src/robot.c ****     }
+ 867              		.loc 1 258 7 view .LVU225
+ 258:Core/Src/robot.c ****     }
+ 868              		.loc 1 258 20 is_stmt 0 view .LVU226
+ 869 02cc 204B     		ldr	r3, .L53
+ 870 02ce 0022     		movs	r2, #0
+ 871 02d0 1A60     		str	r2, [r3]
+ 872              	.L41:
+ 262:Core/Src/robot.c **** 
+ 873              		.loc 1 262 5 is_stmt 1 view .LVU227
+ 262:Core/Src/robot.c **** 
+ 874              		.loc 1 262 24 is_stmt 0 view .LVU228
+ 875 02d2 04F10042 		add	r2, r4, #-2147483648
+ 876 02d6 1F4F     		ldr	r7, .L53+4
+ 877              	.LVL125:
+ 262:Core/Src/robot.c **** 
+ARM GAS  /tmp/ccT2cdC7.s 			page 23
+
+
+ 878              		.loc 1 262 24 view .LVU229
+ 879 02d8 0021     		movs	r1, #0
+ 880 02da 3846     		mov	r0, r7
+ 881 02dc FFF7FEFF 		bl	PID_Compute
+ 882              	.LVL126:
+ 883 02e0 0546     		mov	r5, r0
+ 884              	.LVL127:
+ 265:Core/Src/robot.c ****     float ff_right = -rot_output * SPEED_FF_GAIN;
+ 885              		.loc 1 265 5 is_stmt 1 view .LVU230
+ 265:Core/Src/robot.c ****     float ff_right = -rot_output * SPEED_FF_GAIN;
+ 886              		.loc 1 265 11 is_stmt 0 view .LVU231
+ 887 02e2 4FF07F51 		mov	r1, #1069547520
+ 888 02e6 FFF7FEFF 		bl	__aeabi_fmul
+ 889              	.LVL128:
+ 265:Core/Src/robot.c ****     float ff_right = -rot_output * SPEED_FF_GAIN;
+ 890              		.loc 1 265 11 view .LVU232
+ 891 02ea 0646     		mov	r6, r0
+ 892              	.LVL129:
+ 266:Core/Src/robot.c **** 
+ 893              		.loc 1 266 5 is_stmt 1 view .LVU233
+ 266:Core/Src/robot.c **** 
+ 894              		.loc 1 266 22 is_stmt 0 view .LVU234
+ 895 02ec 05F10048 		add	r8, r5, #-2147483648
+ 896              	.LVL130:
+ 269:Core/Src/robot.c ****         PID_Compute(&robot.pid_speed_left, rot_output, robot.speed_left);
+ 897              		.loc 1 269 5 is_stmt 1 view .LVU235
+ 270:Core/Src/robot.c ****     float pid_right =
+ 898              		.loc 1 270 9 is_stmt 0 view .LVU236
+ 899 02f0 A7F12404 		sub	r4, r7, #36
+ 900              	.LVL131:
+ 270:Core/Src/robot.c ****     float pid_right =
+ 901              		.loc 1 270 9 view .LVU237
+ 902 02f4 57F8082C 		ldr	r2, [r7, #-8]	@ float
+ 903 02f8 2946     		mov	r1, r5
+ 904 02fa 07F12400 		add	r0, r7, #36
+ 905              	.LVL132:
+ 270:Core/Src/robot.c ****     float pid_right =
+ 906              		.loc 1 270 9 view .LVU238
+ 907 02fe FFF7FEFF 		bl	PID_Compute
+ 908              	.LVL133:
+ 909 0302 0546     		mov	r5, r0
+ 910              	.LVL134:
+ 271:Core/Src/robot.c ****         PID_Compute(&robot.pid_speed_right, -rot_output, robot.speed_right);
+ 911              		.loc 1 271 5 is_stmt 1 view .LVU239
+ 272:Core/Src/robot.c **** 
+ 912              		.loc 1 272 9 is_stmt 0 view .LVU240
+ 913 0304 57F8042C 		ldr	r2, [r7, #-4]	@ float
+ 914 0308 4146     		mov	r1, r8
+ 915 030a 07F14800 		add	r0, r7, #72
+ 916              	.LVL135:
+ 272:Core/Src/robot.c **** 
+ 917              		.loc 1 272 9 view .LVU241
+ 918 030e FFF7FEFF 		bl	PID_Compute
+ 919              	.LVL136:
+ 920 0312 0746     		mov	r7, r0
+ 921              	.LVL137:
+ 274:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(ff_right + pid_right);
+ARM GAS  /tmp/ccT2cdC7.s 			page 24
+
+
+ 922              		.loc 1 274 5 is_stmt 1 view .LVU242
+ 274:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(ff_right + pid_right);
+ 923              		.loc 1 274 22 is_stmt 0 view .LVU243
+ 924 0314 2946     		mov	r1, r5
+ 925 0316 3046     		mov	r0, r6
+ 926              	.LVL138:
+ 274:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(ff_right + pid_right);
+ 927              		.loc 1 274 22 view .LVU244
+ 928 0318 FFF7FEFF 		bl	__aeabi_fadd
+ 929              	.LVL139:
+ 930 031c FFF7FEFF 		bl	apply_deadzone
+ 931              	.LVL140:
+ 932 0320 0546     		mov	r5, r0
+ 933              	.LVL141:
+ 274:Core/Src/robot.c ****     robot.pwm_right = apply_deadzone(ff_right + pid_right);
+ 934              		.loc 1 274 20 discriminator 1 view .LVU245
+ 935 0322 A4F89C00 		strh	r0, [r4, #156]	@ movhi
+ 275:Core/Src/robot.c **** 
+ 936              		.loc 1 275 5 is_stmt 1 view .LVU246
+ 275:Core/Src/robot.c **** 
+ 937              		.loc 1 275 23 is_stmt 0 view .LVU247
+ 938 0326 3146     		mov	r1, r6
+ 939 0328 3846     		mov	r0, r7
+ 940 032a FFF7FEFF 		bl	__aeabi_fsub
+ 941              	.LVL142:
+ 942 032e FFF7FEFF 		bl	apply_deadzone
+ 943              	.LVL143:
+ 275:Core/Src/robot.c **** 
+ 944              		.loc 1 275 21 discriminator 1 view .LVU248
+ 945 0332 A4F89E00 		strh	r0, [r4, #158]	@ movhi
+ 277:Core/Src/robot.c ****     Motor_SetSpeed(MOTOR_RIGHT, robot.pwm_right);
+ 946              		.loc 1 277 5 is_stmt 1 view .LVU249
+ 947 0336 2946     		mov	r1, r5
+ 948 0338 0020     		movs	r0, #0
+ 949 033a FFF7FEFF 		bl	Motor_SetSpeed
+ 950              	.LVL144:
+ 278:Core/Src/robot.c ****     break;
+ 951              		.loc 1 278 5 view .LVU250
+ 952 033e B4F99E10 		ldrsh	r1, [r4, #158]
+ 953 0342 0120     		movs	r0, #1
+ 954 0344 FFF7FEFF 		bl	Motor_SetSpeed
+ 955              	.LVL145:
+ 279:Core/Src/robot.c ****   }
+ 956              		.loc 1 279 5 view .LVU251
+ 957 0348 F4E6     		b	.L26
+ 958              	.LVL146:
+ 959              	.L28:
+ 279:Core/Src/robot.c ****   }
+ 960              		.loc 1 279 5 is_stmt 0 view .LVU252
+ 961              	.LBE3:
+ 283:Core/Src/robot.c ****     break;
+ 962              		.loc 1 283 5 is_stmt 1 view .LVU253
+ 963 034a FFF7FEFF 		bl	Motor_Brake
+ 964              	.LVL147:
+ 284:Core/Src/robot.c ****   }
+ 965              		.loc 1 284 5 view .LVU254
+ 966              		.loc 1 286 1 is_stmt 0 view .LVU255
+ARM GAS  /tmp/ccT2cdC7.s 			page 25
+
+
+ 967 034e F1E6     		b	.L26
+ 968              	.L54:
+ 969              		.align	2
+ 970              	.L53:
+ 971 0350 00000000 		.word	settle_count.0
+ 972 0354 24000000 		.word	robot+36
+ 973              		.cfi_endproc
+ 974              	.LFE68:
+ 976              		.section	.text.Robot_GoStraight,"ax",%progbits
+ 977              		.align	1
+ 978              		.global	Robot_GoStraight
+ 979              		.syntax unified
+ 980              		.thumb
+ 981              		.thumb_func
+ 983              	Robot_GoStraight:
+ 984              	.LVL148:
+ 985              	.LFB69:
+ 287:Core/Src/robot.c **** 
+ 288:Core/Src/robot.c **** /* ========================== Commands ==================================== */
+ 289:Core/Src/robot.c **** 
+ 290:Core/Src/robot.c **** void Robot_GoStraight(float speed) {
+ 986              		.loc 1 290 36 is_stmt 1 view -0
+ 987              		.cfi_startproc
+ 988              		@ args = 0, pretend = 0, frame = 0
+ 989              		@ frame_needed = 0, uses_anonymous_args = 0
+ 990              		.loc 1 290 36 is_stmt 0 view .LVU257
+ 991 0000 10B5     		push	{r4, lr}
+ 992              	.LCFI6:
+ 993              		.cfi_def_cfa_offset 8
+ 994              		.cfi_offset 4, -8
+ 995              		.cfi_offset 14, -4
+ 291:Core/Src/robot.c ****   /* Lock current heading as target */
+ 292:Core/Src/robot.c ****   robot.target_heading = robot.imu.heading_deg;
+ 996              		.loc 1 292 3 is_stmt 1 view .LVU258
+ 997              		.loc 1 292 35 is_stmt 0 view .LVU259
+ 998 0002 0A4C     		ldr	r4, .L57
+ 999 0004 E368     		ldr	r3, [r4, #12]	@ float
+ 1000              		.loc 1 292 24 view .LVU260
+ 1001 0006 C4F89030 		str	r3, [r4, #144]	@ float
+ 293:Core/Src/robot.c ****   robot.target_speed = speed;
+ 1002              		.loc 1 293 3 is_stmt 1 view .LVU261
+ 1003              		.loc 1 293 22 is_stmt 0 view .LVU262
+ 1004 000a C4F89400 		str	r0, [r4, #148]	@ float
+ 294:Core/Src/robot.c ****   robot.state = ROBOT_STATE_MOVING;
+ 1005              		.loc 1 294 3 is_stmt 1 view .LVU263
+ 1006              		.loc 1 294 15 is_stmt 0 view .LVU264
+ 1007 000e 2046     		mov	r0, r4
+ 1008              	.LVL149:
+ 1009              		.loc 1 294 15 view .LVU265
+ 1010 0010 0123     		movs	r3, #1
+ 1011 0012 00F8243B 		strb	r3, [r0], #36
+ 295:Core/Src/robot.c **** 
+ 296:Core/Src/robot.c ****   PID_Reset(&robot.pid_heading);
+ 1012              		.loc 1 296 3 is_stmt 1 view .LVU266
+ 1013 0016 FFF7FEFF 		bl	PID_Reset
+ 1014              	.LVL150:
+ 297:Core/Src/robot.c ****   PID_Reset(&robot.pid_speed_left);
+ARM GAS  /tmp/ccT2cdC7.s 			page 26
+
+
+ 1015              		.loc 1 297 3 view .LVU267
+ 1016 001a 04F14800 		add	r0, r4, #72
+ 1017 001e FFF7FEFF 		bl	PID_Reset
+ 1018              	.LVL151:
+ 298:Core/Src/robot.c ****   PID_Reset(&robot.pid_speed_right);
+ 1019              		.loc 1 298 3 view .LVU268
+ 1020 0022 04F16C00 		add	r0, r4, #108
+ 1021 0026 FFF7FEFF 		bl	PID_Reset
+ 1022              	.LVL152:
+ 299:Core/Src/robot.c **** }
+ 1023              		.loc 1 299 1 is_stmt 0 view .LVU269
+ 1024 002a 10BD     		pop	{r4, pc}
+ 1025              	.L58:
+ 1026              		.align	2
+ 1027              	.L57:
+ 1028 002c 00000000 		.word	robot
+ 1029              		.cfi_endproc
+ 1030              	.LFE69:
+ 1032              		.section	.text.Robot_Rotate,"ax",%progbits
+ 1033              		.align	1
+ 1034              		.global	Robot_Rotate
+ 1035              		.syntax unified
+ 1036              		.thumb
+ 1037              		.thumb_func
+ 1039              	Robot_Rotate:
+ 1040              	.LVL153:
+ 1041              	.LFB70:
+ 300:Core/Src/robot.c **** 
+ 301:Core/Src/robot.c **** void Robot_Rotate(float angle_deg, float speed) {
+ 1042              		.loc 1 301 49 is_stmt 1 view -0
+ 1043              		.cfi_startproc
+ 1044              		@ args = 0, pretend = 0, frame = 0
+ 1045              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1046              		.loc 1 301 49 is_stmt 0 view .LVU271
+ 1047 0000 38B5     		push	{r3, r4, r5, lr}
+ 1048              	.LCFI7:
+ 1049              		.cfi_def_cfa_offset 16
+ 1050              		.cfi_offset 3, -16
+ 1051              		.cfi_offset 4, -12
+ 1052              		.cfi_offset 5, -8
+ 1053              		.cfi_offset 14, -4
+ 1054 0002 0D46     		mov	r5, r1
+ 302:Core/Src/robot.c ****   /* Absolute target = current + relative angle */
+ 303:Core/Src/robot.c ****   robot.rotation_target = robot.imu.heading_deg + angle_deg;
+ 1055              		.loc 1 303 3 is_stmt 1 view .LVU272
+ 1056              		.loc 1 303 36 is_stmt 0 view .LVU273
+ 1057 0004 1E4C     		ldr	r4, .L65
+ 1058              		.loc 1 303 49 view .LVU274
+ 1059 0006 0146     		mov	r1, r0
+ 1060              	.LVL154:
+ 1061              		.loc 1 303 49 view .LVU275
+ 1062 0008 E068     		ldr	r0, [r4, #12]	@ float
+ 1063              	.LVL155:
+ 1064              		.loc 1 303 49 view .LVU276
+ 1065 000a FFF7FEFF 		bl	__aeabi_fadd
+ 1066              	.LVL156:
+ 1067              		.loc 1 303 25 view .LVU277
+ARM GAS  /tmp/ccT2cdC7.s 			page 27
+
+
+ 1068 000e C4F8A000 		str	r0, [r4, #160]	@ float
+ 304:Core/Src/robot.c **** 
+ 305:Core/Src/robot.c ****   /* Normalize to [-180, +180] */
+ 306:Core/Src/robot.c ****   while (robot.rotation_target > 180.0f)
+ 1069              		.loc 1 306 3 is_stmt 1 view .LVU278
+ 1070              		.loc 1 306 9 is_stmt 0 view .LVU279
+ 1071 0012 06E0     		b	.L60
+ 1072              	.L61:
+ 307:Core/Src/robot.c ****     robot.rotation_target -= 360.0f;
+ 1073              		.loc 1 307 5 is_stmt 1 view .LVU280
+ 1074              		.loc 1 307 27 is_stmt 0 view .LVU281
+ 1075 0014 1B49     		ldr	r1, .L65+4
+ 1076 0016 2046     		mov	r0, r4
+ 1077 0018 FFF7FEFF 		bl	__aeabi_fsub
+ 1078              	.LVL157:
+ 1079 001c 184B     		ldr	r3, .L65
+ 1080 001e C3F8A000 		str	r0, [r3, #160]	@ float
+ 1081              	.L60:
+ 306:Core/Src/robot.c ****     robot.rotation_target -= 360.0f;
+ 1082              		.loc 1 306 32 is_stmt 1 view .LVU282
+ 306:Core/Src/robot.c ****     robot.rotation_target -= 360.0f;
+ 1083              		.loc 1 306 15 is_stmt 0 view .LVU283
+ 1084 0022 174B     		ldr	r3, .L65
+ 1085 0024 D3F8A040 		ldr	r4, [r3, #160]	@ float
+ 306:Core/Src/robot.c ****     robot.rotation_target -= 360.0f;
+ 1086              		.loc 1 306 32 view .LVU284
+ 1087 0028 1749     		ldr	r1, .L65+8
+ 1088 002a 2046     		mov	r0, r4
+ 1089 002c FFF7FEFF 		bl	__aeabi_fcmpgt
+ 1090              	.LVL158:
+ 1091 0030 0028     		cmp	r0, #0
+ 1092 0032 EFD1     		bne	.L61
+ 1093 0034 06E0     		b	.L62
+ 1094              	.L63:
+ 308:Core/Src/robot.c ****   while (robot.rotation_target < -180.0f)
+ 309:Core/Src/robot.c ****     robot.rotation_target += 360.0f;
+ 1095              		.loc 1 309 5 is_stmt 1 view .LVU285
+ 1096              		.loc 1 309 27 is_stmt 0 view .LVU286
+ 1097 0036 1349     		ldr	r1, .L65+4
+ 1098 0038 2046     		mov	r0, r4
+ 1099 003a FFF7FEFF 		bl	__aeabi_fadd
+ 1100              	.LVL159:
+ 1101 003e 104B     		ldr	r3, .L65
+ 1102 0040 C3F8A000 		str	r0, [r3, #160]	@ float
+ 1103              	.L62:
+ 308:Core/Src/robot.c ****   while (robot.rotation_target < -180.0f)
+ 1104              		.loc 1 308 32 is_stmt 1 view .LVU287
+ 308:Core/Src/robot.c ****   while (robot.rotation_target < -180.0f)
+ 1105              		.loc 1 308 15 is_stmt 0 view .LVU288
+ 1106 0044 0E4B     		ldr	r3, .L65
+ 1107 0046 D3F8A040 		ldr	r4, [r3, #160]	@ float
+ 308:Core/Src/robot.c ****   while (robot.rotation_target < -180.0f)
+ 1108              		.loc 1 308 32 view .LVU289
+ 1109 004a 1049     		ldr	r1, .L65+12
+ 1110 004c 2046     		mov	r0, r4
+ 1111 004e FFF7FEFF 		bl	__aeabi_fcmplt
+ 1112              	.LVL160:
+ARM GAS  /tmp/ccT2cdC7.s 			page 28
+
+
+ 1113 0052 0028     		cmp	r0, #0
+ 1114 0054 EFD1     		bne	.L63
+ 310:Core/Src/robot.c **** 
+ 311:Core/Src/robot.c ****   robot.target_speed = speed;
+ 1115              		.loc 1 311 3 is_stmt 1 view .LVU290
+ 1116              		.loc 1 311 22 is_stmt 0 view .LVU291
+ 1117 0056 0A4C     		ldr	r4, .L65
+ 1118 0058 C4F89450 		str	r5, [r4, #148]	@ float
+ 312:Core/Src/robot.c ****   robot.rotation_done = 0;
+ 1119              		.loc 1 312 3 is_stmt 1 view .LVU292
+ 1120              		.loc 1 312 23 is_stmt 0 view .LVU293
+ 1121 005c 0023     		movs	r3, #0
+ 1122 005e 84F8A430 		strb	r3, [r4, #164]
+ 313:Core/Src/robot.c ****   robot.state = ROBOT_STATE_ROTATING;
+ 1123              		.loc 1 313 3 is_stmt 1 view .LVU294
+ 1124              		.loc 1 313 15 is_stmt 0 view .LVU295
+ 1125 0062 2046     		mov	r0, r4
+ 1126 0064 0223     		movs	r3, #2
+ 1127 0066 00F8243B 		strb	r3, [r0], #36
+ 314:Core/Src/robot.c **** 
+ 315:Core/Src/robot.c ****   PID_Reset(&robot.pid_heading);
+ 1128              		.loc 1 315 3 is_stmt 1 view .LVU296
+ 1129 006a FFF7FEFF 		bl	PID_Reset
+ 1130              	.LVL161:
+ 316:Core/Src/robot.c ****   PID_Reset(&robot.pid_speed_left);
+ 1131              		.loc 1 316 3 view .LVU297
+ 1132 006e 04F14800 		add	r0, r4, #72
+ 1133 0072 FFF7FEFF 		bl	PID_Reset
+ 1134              	.LVL162:
+ 317:Core/Src/robot.c ****   PID_Reset(&robot.pid_speed_right);
+ 1135              		.loc 1 317 3 view .LVU298
+ 1136 0076 04F16C00 		add	r0, r4, #108
+ 1137 007a FFF7FEFF 		bl	PID_Reset
+ 1138              	.LVL163:
+ 318:Core/Src/robot.c **** }
+ 1139              		.loc 1 318 1 is_stmt 0 view .LVU299
+ 1140 007e 38BD     		pop	{r3, r4, r5, pc}
+ 1141              	.LVL164:
+ 1142              	.L66:
+ 1143              		.loc 1 318 1 view .LVU300
+ 1144              		.align	2
+ 1145              	.L65:
+ 1146 0080 00000000 		.word	robot
+ 1147 0084 0000B443 		.word	1135869952
+ 1148 0088 00003443 		.word	1127481344
+ 1149 008c 000034C3 		.word	-1020002304
+ 1150              		.cfi_endproc
+ 1151              	.LFE70:
+ 1153              		.section	.text.Robot_Stop,"ax",%progbits
+ 1154              		.align	1
+ 1155              		.global	Robot_Stop
+ 1156              		.syntax unified
+ 1157              		.thumb
+ 1158              		.thumb_func
+ 1160              	Robot_Stop:
+ 1161              	.LFB72:
+ 319:Core/Src/robot.c **** 
+ARM GAS  /tmp/ccT2cdC7.s 			page 29
+
+
+ 320:Core/Src/robot.c **** void Robot_SetVelocity(float linear_speed, float angular_vel) {
+ 321:Core/Src/robot.c ****   if (fabsf(linear_speed) < 0.1f && fabsf(angular_vel) < 0.1f) {
+ 322:Core/Src/robot.c ****     Robot_Stop();
+ 323:Core/Src/robot.c ****     return;
+ 324:Core/Src/robot.c ****   }
+ 325:Core/Src/robot.c **** 
+ 326:Core/Src/robot.c ****   robot.target_speed = linear_speed;
+ 327:Core/Src/robot.c ****   robot.target_angular_vel = angular_vel;
+ 328:Core/Src/robot.c **** 
+ 329:Core/Src/robot.c ****   /* Update heading target continuously based on angular velocity */
+ 330:Core/Src/robot.c ****   robot.target_heading += angular_vel * CONTROL_DT;
+ 331:Core/Src/robot.c ****   while (robot.target_heading > 180.0f)
+ 332:Core/Src/robot.c ****     robot.target_heading -= 360.0f;
+ 333:Core/Src/robot.c ****   while (robot.target_heading < -180.0f)
+ 334:Core/Src/robot.c ****     robot.target_heading += 360.0f;
+ 335:Core/Src/robot.c **** 
+ 336:Core/Src/robot.c ****   if (robot.state != ROBOT_STATE_MOVING) {
+ 337:Core/Src/robot.c ****     robot.state = ROBOT_STATE_MOVING;
+ 338:Core/Src/robot.c ****     PID_Reset(&robot.pid_heading);
+ 339:Core/Src/robot.c ****     PID_Reset(&robot.pid_speed_left);
+ 340:Core/Src/robot.c ****     PID_Reset(&robot.pid_speed_right);
+ 341:Core/Src/robot.c ****   }
+ 342:Core/Src/robot.c **** }
+ 343:Core/Src/robot.c **** 
+ 344:Core/Src/robot.c **** void Robot_Stop(void) {
+ 1162              		.loc 1 344 23 is_stmt 1 view -0
+ 1163              		.cfi_startproc
+ 1164              		@ args = 0, pretend = 0, frame = 0
+ 1165              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1166 0000 38B5     		push	{r3, r4, r5, lr}
+ 1167              	.LCFI8:
+ 1168              		.cfi_def_cfa_offset 16
+ 1169              		.cfi_offset 3, -16
+ 1170              		.cfi_offset 4, -12
+ 1171              		.cfi_offset 5, -8
+ 1172              		.cfi_offset 14, -4
+ 345:Core/Src/robot.c ****   robot.state = ROBOT_STATE_IDLE;
+ 1173              		.loc 1 345 3 view .LVU302
+ 1174              		.loc 1 345 15 is_stmt 0 view .LVU303
+ 1175 0002 114C     		ldr	r4, .L69
+ 1176 0004 0023     		movs	r3, #0
+ 1177 0006 2370     		strb	r3, [r4]
+ 346:Core/Src/robot.c ****   robot.target_speed = 0.0f;
+ 1178              		.loc 1 346 3 is_stmt 1 view .LVU304
+ 1179              		.loc 1 346 22 is_stmt 0 view .LVU305
+ 1180 0008 0025     		movs	r5, #0
+ 1181 000a C4F89450 		str	r5, [r4, #148]	@ float
+ 347:Core/Src/robot.c ****   robot.pwm_left = 0;
+ 1182              		.loc 1 347 3 is_stmt 1 view .LVU306
+ 1183              		.loc 1 347 18 is_stmt 0 view .LVU307
+ 1184 000e A4F89C30 		strh	r3, [r4, #156]	@ movhi
+ 348:Core/Src/robot.c ****   robot.pwm_right = 0;
+ 1185              		.loc 1 348 3 is_stmt 1 view .LVU308
+ 1186              		.loc 1 348 19 is_stmt 0 view .LVU309
+ 1187 0012 A4F89E30 		strh	r3, [r4, #158]	@ movhi
+ 349:Core/Src/robot.c **** 
+ 350:Core/Src/robot.c ****   Motor_Brake();
+ARM GAS  /tmp/ccT2cdC7.s 			page 30
+
+
+ 1188              		.loc 1 350 3 is_stmt 1 view .LVU310
+ 1189 0016 FFF7FEFF 		bl	Motor_Brake
+ 1190              	.LVL165:
+ 351:Core/Src/robot.c **** 
+ 352:Core/Src/robot.c ****   PID_Reset(&robot.pid_heading);
+ 1191              		.loc 1 352 3 view .LVU311
+ 1192 001a 04F12400 		add	r0, r4, #36
+ 1193 001e FFF7FEFF 		bl	PID_Reset
+ 1194              	.LVL166:
+ 353:Core/Src/robot.c ****   PID_Reset(&robot.pid_speed_left);
+ 1195              		.loc 1 353 3 view .LVU312
+ 1196 0022 04F14800 		add	r0, r4, #72
+ 1197 0026 FFF7FEFF 		bl	PID_Reset
+ 1198              	.LVL167:
+ 354:Core/Src/robot.c ****   PID_Reset(&robot.pid_speed_right);
+ 1199              		.loc 1 354 3 view .LVU313
+ 1200 002a 04F16C00 		add	r0, r4, #108
+ 1201 002e FFF7FEFF 		bl	PID_Reset
+ 1202              	.LVL168:
+ 355:Core/Src/robot.c ****   filtered_speed_left = 0.0f;
+ 1203              		.loc 1 355 3 view .LVU314
+ 1204              		.loc 1 355 23 is_stmt 0 view .LVU315
+ 1205 0032 064B     		ldr	r3, .L69+4
+ 1206 0034 1D60     		str	r5, [r3]	@ float
+ 356:Core/Src/robot.c ****   filtered_speed_right = 0.0f;
+ 1207              		.loc 1 356 3 is_stmt 1 view .LVU316
+ 1208              		.loc 1 356 24 is_stmt 0 view .LVU317
+ 1209 0036 064B     		ldr	r3, .L69+8
+ 1210 0038 1D60     		str	r5, [r3]	@ float
+ 357:Core/Src/robot.c ****   ramped_speed = 0.0f;
+ 1211              		.loc 1 357 3 is_stmt 1 view .LVU318
+ 1212              		.loc 1 357 16 is_stmt 0 view .LVU319
+ 1213 003a 064B     		ldr	r3, .L69+12
+ 1214 003c 1D60     		str	r5, [r3]	@ float
+ 358:Core/Src/robot.c **** 
+ 359:Core/Src/robot.c ****   /* Reset heading to zero on stop.
+ 360:Core/Src/robot.c ****    * This prevents gyro drift from accumulating across multiple maneuvers.
+ 361:Core/Src/robot.c ****    * Each new GoStraight/Rotate starts with a fresh heading reference. */
+ 362:Core/Src/robot.c ****   MPU6050_ResetHeading(&robot.imu);
+ 1215              		.loc 1 362 3 is_stmt 1 view .LVU320
+ 1216 003e 201D     		adds	r0, r4, #4
+ 1217 0040 FFF7FEFF 		bl	MPU6050_ResetHeading
+ 1218              	.LVL169:
+ 363:Core/Src/robot.c **** }
+ 1219              		.loc 1 363 1 is_stmt 0 view .LVU321
+ 1220 0044 38BD     		pop	{r3, r4, r5, pc}
+ 1221              	.L70:
+ 1222 0046 00BF     		.align	2
+ 1223              	.L69:
+ 1224 0048 00000000 		.word	robot
+ 1225 004c 00000000 		.word	filtered_speed_left
+ 1226 0050 00000000 		.word	filtered_speed_right
+ 1227 0054 00000000 		.word	ramped_speed
+ 1228              		.cfi_endproc
+ 1229              	.LFE72:
+ 1231              		.section	.text.Robot_SetVelocity,"ax",%progbits
+ 1232              		.align	1
+ARM GAS  /tmp/ccT2cdC7.s 			page 31
+
+
+ 1233              		.global	Robot_SetVelocity
+ 1234              		.syntax unified
+ 1235              		.thumb
+ 1236              		.thumb_func
+ 1238              	Robot_SetVelocity:
+ 1239              	.LVL170:
+ 1240              	.LFB71:
+ 320:Core/Src/robot.c ****   if (fabsf(linear_speed) < 0.1f && fabsf(angular_vel) < 0.1f) {
+ 1241              		.loc 1 320 63 is_stmt 1 view -0
+ 1242              		.cfi_startproc
+ 1243              		@ args = 0, pretend = 0, frame = 0
+ 1244              		@ frame_needed = 0, uses_anonymous_args = 0
+ 320:Core/Src/robot.c ****   if (fabsf(linear_speed) < 0.1f && fabsf(angular_vel) < 0.1f) {
+ 1245              		.loc 1 320 63 is_stmt 0 view .LVU323
+ 1246 0000 70B5     		push	{r4, r5, r6, lr}
+ 1247              	.LCFI9:
+ 1248              		.cfi_def_cfa_offset 16
+ 1249              		.cfi_offset 4, -16
+ 1250              		.cfi_offset 5, -12
+ 1251              		.cfi_offset 6, -8
+ 1252              		.cfi_offset 14, -4
+ 1253 0002 0546     		mov	r5, r0
+ 1254 0004 0C46     		mov	r4, r1
+ 321:Core/Src/robot.c ****     Robot_Stop();
+ 1255              		.loc 1 321 3 is_stmt 1 view .LVU324
+ 321:Core/Src/robot.c ****     Robot_Stop();
+ 1256              		.loc 1 321 7 is_stmt 0 view .LVU325
+ 1257 0006 20F00040 		bic	r0, r0, #-2147483648
+ 1258              	.LVL171:
+ 321:Core/Src/robot.c ****     Robot_Stop();
+ 1259              		.loc 1 321 6 view .LVU326
+ 1260 000a 2A49     		ldr	r1, .L85
+ 1261              	.LVL172:
+ 321:Core/Src/robot.c ****     Robot_Stop();
+ 1262              		.loc 1 321 6 view .LVU327
+ 1263 000c FFF7FEFF 		bl	__aeabi_fcmplt
+ 1264              	.LVL173:
+ 1265 0010 28B1     		cbz	r0, .L72
+ 321:Core/Src/robot.c ****     Robot_Stop();
+ 1266              		.loc 1 321 37 discriminator 1 view .LVU328
+ 1267 0012 24F00040 		bic	r0, r4, #-2147483648
+ 321:Core/Src/robot.c ****     Robot_Stop();
+ 1268              		.loc 1 321 34 discriminator 1 view .LVU329
+ 1269 0016 2749     		ldr	r1, .L85
+ 1270 0018 FFF7FEFF 		bl	__aeabi_fcmplt
+ 1271              	.LVL174:
+ 1272 001c 88B9     		cbnz	r0, .L83
+ 1273              	.L72:
+ 326:Core/Src/robot.c ****   robot.target_angular_vel = angular_vel;
+ 1274              		.loc 1 326 3 is_stmt 1 view .LVU330
+ 326:Core/Src/robot.c ****   robot.target_angular_vel = angular_vel;
+ 1275              		.loc 1 326 22 is_stmt 0 view .LVU331
+ 1276 001e 264E     		ldr	r6, .L85+4
+ 1277 0020 C6F89450 		str	r5, [r6, #148]	@ float
+ 327:Core/Src/robot.c **** 
+ 1278              		.loc 1 327 3 is_stmt 1 view .LVU332
+ 327:Core/Src/robot.c **** 
+ARM GAS  /tmp/ccT2cdC7.s 			page 32
+
+
+ 1279              		.loc 1 327 28 is_stmt 0 view .LVU333
+ 1280 0024 C6F89840 		str	r4, [r6, #152]	@ float
+ 330:Core/Src/robot.c ****   while (robot.target_heading > 180.0f)
+ 1281              		.loc 1 330 3 is_stmt 1 view .LVU334
+ 330:Core/Src/robot.c ****   while (robot.target_heading > 180.0f)
+ 1282              		.loc 1 330 8 is_stmt 0 view .LVU335
+ 1283 0028 D6F89050 		ldr	r5, [r6, #144]	@ float
+ 1284              	.LVL175:
+ 330:Core/Src/robot.c ****   while (robot.target_heading > 180.0f)
+ 1285              		.loc 1 330 39 view .LVU336
+ 1286 002c 2349     		ldr	r1, .L85+8
+ 1287 002e 2046     		mov	r0, r4
+ 1288 0030 FFF7FEFF 		bl	__aeabi_fmul
+ 1289              	.LVL176:
+ 330:Core/Src/robot.c ****   while (robot.target_heading > 180.0f)
+ 1290              		.loc 1 330 39 view .LVU337
+ 1291 0034 0146     		mov	r1, r0
+ 330:Core/Src/robot.c ****   while (robot.target_heading > 180.0f)
+ 1292              		.loc 1 330 24 view .LVU338
+ 1293 0036 2846     		mov	r0, r5
+ 1294 0038 FFF7FEFF 		bl	__aeabi_fadd
+ 1295              	.LVL177:
+ 1296 003c C6F89000 		str	r0, [r6, #144]	@ float
+ 331:Core/Src/robot.c ****     robot.target_heading -= 360.0f;
+ 1297              		.loc 1 331 3 is_stmt 1 view .LVU339
+ 331:Core/Src/robot.c ****     robot.target_heading -= 360.0f;
+ 1298              		.loc 1 331 9 is_stmt 0 view .LVU340
+ 1299 0040 09E0     		b	.L76
+ 1300              	.LVL178:
+ 1301              	.L83:
+ 322:Core/Src/robot.c ****     return;
+ 1302              		.loc 1 322 5 is_stmt 1 view .LVU341
+ 1303 0042 FFF7FEFF 		bl	Robot_Stop
+ 1304              	.LVL179:
+ 323:Core/Src/robot.c ****   }
+ 1305              		.loc 1 323 5 view .LVU342
+ 1306 0046 24E0     		b	.L71
+ 1307              	.LVL180:
+ 1308              	.L77:
+ 332:Core/Src/robot.c ****   while (robot.target_heading < -180.0f)
+ 1309              		.loc 1 332 5 view .LVU343
+ 332:Core/Src/robot.c ****   while (robot.target_heading < -180.0f)
+ 1310              		.loc 1 332 26 is_stmt 0 view .LVU344
+ 1311 0048 1D49     		ldr	r1, .L85+12
+ 1312 004a 2046     		mov	r0, r4
+ 1313 004c FFF7FEFF 		bl	__aeabi_fsub
+ 1314              	.LVL181:
+ 1315 0050 194B     		ldr	r3, .L85+4
+ 1316 0052 C3F89000 		str	r0, [r3, #144]	@ float
+ 1317              	.L76:
+ 331:Core/Src/robot.c ****     robot.target_heading -= 360.0f;
+ 1318              		.loc 1 331 31 is_stmt 1 view .LVU345
+ 331:Core/Src/robot.c ****     robot.target_heading -= 360.0f;
+ 1319              		.loc 1 331 15 is_stmt 0 view .LVU346
+ 1320 0056 184B     		ldr	r3, .L85+4
+ 1321 0058 D3F89040 		ldr	r4, [r3, #144]	@ float
+ 331:Core/Src/robot.c ****     robot.target_heading -= 360.0f;
+ARM GAS  /tmp/ccT2cdC7.s 			page 33
+
+
+ 1322              		.loc 1 331 31 view .LVU347
+ 1323 005c 1949     		ldr	r1, .L85+16
+ 1324 005e 2046     		mov	r0, r4
+ 1325 0060 FFF7FEFF 		bl	__aeabi_fcmpgt
+ 1326              	.LVL182:
+ 1327 0064 0028     		cmp	r0, #0
+ 1328 0066 EFD1     		bne	.L77
+ 1329 0068 06E0     		b	.L78
+ 1330              	.L79:
+ 334:Core/Src/robot.c **** 
+ 1331              		.loc 1 334 5 is_stmt 1 view .LVU348
+ 334:Core/Src/robot.c **** 
+ 1332              		.loc 1 334 26 is_stmt 0 view .LVU349
+ 1333 006a 1549     		ldr	r1, .L85+12
+ 1334 006c 2046     		mov	r0, r4
+ 1335 006e FFF7FEFF 		bl	__aeabi_fadd
+ 1336              	.LVL183:
+ 1337 0072 114B     		ldr	r3, .L85+4
+ 1338 0074 C3F89000 		str	r0, [r3, #144]	@ float
+ 1339              	.L78:
+ 333:Core/Src/robot.c ****     robot.target_heading += 360.0f;
+ 1340              		.loc 1 333 31 is_stmt 1 view .LVU350
+ 333:Core/Src/robot.c ****     robot.target_heading += 360.0f;
+ 1341              		.loc 1 333 15 is_stmt 0 view .LVU351
+ 1342 0078 0F4B     		ldr	r3, .L85+4
+ 1343 007a D3F89040 		ldr	r4, [r3, #144]	@ float
+ 333:Core/Src/robot.c ****     robot.target_heading += 360.0f;
+ 1344              		.loc 1 333 31 view .LVU352
+ 1345 007e 1249     		ldr	r1, .L85+20
+ 1346 0080 2046     		mov	r0, r4
+ 1347 0082 FFF7FEFF 		bl	__aeabi_fcmplt
+ 1348              	.LVL184:
+ 1349 0086 0028     		cmp	r0, #0
+ 1350 0088 EFD1     		bne	.L79
+ 336:Core/Src/robot.c ****     robot.state = ROBOT_STATE_MOVING;
+ 1351              		.loc 1 336 3 is_stmt 1 view .LVU353
+ 336:Core/Src/robot.c ****     robot.state = ROBOT_STATE_MOVING;
+ 1352              		.loc 1 336 12 is_stmt 0 view .LVU354
+ 1353 008a 0B4B     		ldr	r3, .L85+4
+ 1354 008c 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 336:Core/Src/robot.c ****     robot.state = ROBOT_STATE_MOVING;
+ 1355              		.loc 1 336 6 view .LVU355
+ 1356 008e 012B     		cmp	r3, #1
+ 1357 0090 00D1     		bne	.L84
+ 1358              	.L71:
+ 342:Core/Src/robot.c **** 
+ 1359              		.loc 1 342 1 view .LVU356
+ 1360 0092 70BD     		pop	{r4, r5, r6, pc}
+ 1361              	.L84:
+ 337:Core/Src/robot.c ****     PID_Reset(&robot.pid_heading);
+ 1362              		.loc 1 337 5 is_stmt 1 view .LVU357
+ 337:Core/Src/robot.c ****     PID_Reset(&robot.pid_heading);
+ 1363              		.loc 1 337 17 is_stmt 0 view .LVU358
+ 1364 0094 084C     		ldr	r4, .L85+4
+ 1365 0096 2046     		mov	r0, r4
+ 1366 0098 0123     		movs	r3, #1
+ 1367 009a 00F8243B 		strb	r3, [r0], #36
+ARM GAS  /tmp/ccT2cdC7.s 			page 34
+
+
+ 338:Core/Src/robot.c ****     PID_Reset(&robot.pid_speed_left);
+ 1368              		.loc 1 338 5 is_stmt 1 view .LVU359
+ 1369 009e FFF7FEFF 		bl	PID_Reset
+ 1370              	.LVL185:
+ 339:Core/Src/robot.c ****     PID_Reset(&robot.pid_speed_right);
+ 1371              		.loc 1 339 5 view .LVU360
+ 1372 00a2 04F14800 		add	r0, r4, #72
+ 1373 00a6 FFF7FEFF 		bl	PID_Reset
+ 1374              	.LVL186:
+ 340:Core/Src/robot.c ****   }
+ 1375              		.loc 1 340 5 view .LVU361
+ 1376 00aa 04F16C00 		add	r0, r4, #108
+ 1377 00ae FFF7FEFF 		bl	PID_Reset
+ 1378              	.LVL187:
+ 1379 00b2 EEE7     		b	.L71
+ 1380              	.L86:
+ 1381              		.align	2
+ 1382              	.L85:
+ 1383 00b4 CDCCCC3D 		.word	1036831949
+ 1384 00b8 00000000 		.word	robot
+ 1385 00bc 0AD7A33B 		.word	1000593162
+ 1386 00c0 0000B443 		.word	1135869952
+ 1387 00c4 00003443 		.word	1127481344
+ 1388 00c8 000034C3 		.word	-1020002304
+ 1389              		.cfi_endproc
+ 1390              	.LFE71:
+ 1392              		.section	.text.Robot_IsRotationDone,"ax",%progbits
+ 1393              		.align	1
+ 1394              		.global	Robot_IsRotationDone
+ 1395              		.syntax unified
+ 1396              		.thumb
+ 1397              		.thumb_func
+ 1399              	Robot_IsRotationDone:
+ 1400              	.LFB73:
+ 364:Core/Src/robot.c **** 
+ 365:Core/Src/robot.c **** uint8_t Robot_IsRotationDone(void) { return robot.rotation_done; }
+ 1401              		.loc 1 365 36 view -0
+ 1402              		.cfi_startproc
+ 1403              		@ args = 0, pretend = 0, frame = 0
+ 1404              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1405              		@ link register save eliminated.
+ 1406              		.loc 1 365 38 view .LVU363
+ 1407              		.loc 1 365 66 is_stmt 0 view .LVU364
+ 1408 0000 014B     		ldr	r3, .L88
+ 1409 0002 93F8A400 		ldrb	r0, [r3, #164]	@ zero_extendqisi2
+ 1410 0006 7047     		bx	lr
+ 1411              	.L89:
+ 1412              		.align	2
+ 1413              	.L88:
+ 1414 0008 00000000 		.word	robot
+ 1415              		.cfi_endproc
+ 1416              	.LFE73:
+ 1418              		.section	.text.Robot_SetFFBias,"ax",%progbits
+ 1419              		.align	1
+ 1420              		.global	Robot_SetFFBias
+ 1421              		.syntax unified
+ 1422              		.thumb
+ARM GAS  /tmp/ccT2cdC7.s 			page 35
+
+
+ 1423              		.thumb_func
+ 1425              	Robot_SetFFBias:
+ 1426              	.LVL188:
+ 1427              	.LFB74:
+ 366:Core/Src/robot.c **** 
+ 367:Core/Src/robot.c **** void Robot_SetFFBias(float left_gain, float right_gain) {
+ 1428              		.loc 1 367 57 is_stmt 1 view -0
+ 1429              		.cfi_startproc
+ 1430              		@ args = 0, pretend = 0, frame = 0
+ 1431              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1432              		@ link register save eliminated.
+ 368:Core/Src/robot.c ****   ff_gain_left = left_gain;
+ 1433              		.loc 1 368 3 view .LVU366
+ 1434              		.loc 1 368 16 is_stmt 0 view .LVU367
+ 1435 0000 024B     		ldr	r3, .L91
+ 1436 0002 1860     		str	r0, [r3]	@ float
+ 369:Core/Src/robot.c ****   ff_gain_right = right_gain;
+ 1437              		.loc 1 369 3 is_stmt 1 view .LVU368
+ 1438              		.loc 1 369 17 is_stmt 0 view .LVU369
+ 1439 0004 024B     		ldr	r3, .L91+4
+ 1440 0006 1960     		str	r1, [r3]	@ float
+ 370:Core/Src/robot.c **** }
+ 1441              		.loc 1 370 1 view .LVU370
+ 1442 0008 7047     		bx	lr
+ 1443              	.L92:
+ 1444 000a 00BF     		.align	2
+ 1445              	.L91:
+ 1446 000c 00000000 		.word	ff_gain_left
+ 1447 0010 00000000 		.word	ff_gain_right
+ 1448              		.cfi_endproc
+ 1449              	.LFE74:
+ 1451              		.section	.bss.settle_count.0,"aw",%nobits
+ 1452              		.align	2
+ 1455              	settle_count.0:
+ 1456 0000 00000000 		.space	4
+ 1457              		.section	.bss.ramped_speed,"aw",%nobits
+ 1458              		.align	2
+ 1461              	ramped_speed:
+ 1462 0000 00000000 		.space	4
+ 1463              		.section	.data.ff_gain_right,"aw"
+ 1464              		.align	2
+ 1467              	ff_gain_right:
+ 1468 0000 0000C03F 		.word	1069547520
+ 1469              		.section	.data.ff_gain_left,"aw"
+ 1470              		.align	2
+ 1473              	ff_gain_left:
+ 1474 0000 0000C03F 		.word	1069547520
+ 1475              		.section	.bss.filtered_speed_right,"aw",%nobits
+ 1476              		.align	2
+ 1479              	filtered_speed_right:
+ 1480 0000 00000000 		.space	4
+ 1481              		.section	.data.filtered_speed_left,"aw"
+ 1482              		.align	2
+ 1485              	filtered_speed_left:
+ 1486 0000 CDCC4C3D 		.word	1028443341
+ 1487              		.global	robot
+ 1488              		.section	.bss.robot,"aw",%nobits
+ARM GAS  /tmp/ccT2cdC7.s 			page 36
+
+
+ 1489              		.align	2
+ 1492              	robot:
+ 1493 0000 00000000 		.space	180
+ 1493      00000000 
+ 1493      00000000 
+ 1493      00000000 
+ 1493      00000000 
+ 1494              		.text
+ 1495              	.Letext0:
+ 1496              		.file 2 "/usr/arm-none-eabi/include/machine/_default_types.h"
+ 1497              		.file 3 "/usr/arm-none-eabi/include/sys/_stdint.h"
+ 1498              		.file 4 "Drivers/CMSIS/Device/ST/STM32F1xx/Include/stm32f103xb.h"
+ 1499              		.file 5 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_def.h"
+ 1500              		.file 6 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_dma.h"
+ 1501              		.file 7 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_i2c.h"
+ 1502              		.file 8 "Core/Inc/mpu6050.h"
+ 1503              		.file 9 "Core/Inc/pid.h"
+ 1504              		.file 10 "Core/Inc/robot.h"
+ 1505              		.file 11 "Core/Inc/encoder.h"
+ 1506              		.file 12 "Core/Inc/motor.h"
+ 1507              		.file 13 "/usr/arm-none-eabi/include/math.h"
+ARM GAS  /tmp/ccT2cdC7.s 			page 37
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 robot.c
+     /tmp/ccT2cdC7.s:19     .text.angle_diff:00000000 $t
+     /tmp/ccT2cdC7.s:24     .text.angle_diff:00000000 angle_diff
+     /tmp/ccT2cdC7.s:92     .text.angle_diff:0000003c $d
+     /tmp/ccT2cdC7.s:99     .text.apply_deadzone:00000000 $t
+     /tmp/ccT2cdC7.s:104    .text.apply_deadzone:00000000 apply_deadzone
+     /tmp/ccT2cdC7.s:179    .text.apply_deadzone:0000003c $d
+     /tmp/ccT2cdC7.s:184    .text.Robot_Init:00000000 $t
+     /tmp/ccT2cdC7.s:190    .text.Robot_Init:00000000 Robot_Init
+     /tmp/ccT2cdC7.s:319    .text.Robot_Init:000000b8 $d
+     /tmp/ccT2cdC7.s:1492   .bss.robot:00000000 robot
+     /tmp/ccT2cdC7.s:1485   .data.filtered_speed_left:00000000 filtered_speed_left
+     /tmp/ccT2cdC7.s:1479   .bss.filtered_speed_right:00000000 filtered_speed_right
+     /tmp/ccT2cdC7.s:333    .text.Robot_Update:00000000 $t
+     /tmp/ccT2cdC7.s:339    .text.Robot_Update:00000000 Robot_Update
+     /tmp/ccT2cdC7.s:533    .text.Robot_Update:00000108 $d
+     /tmp/ccT2cdC7.s:537    .text.Robot_Update:00000110 $t
+     /tmp/ccT2cdC7.s:853    .text.Robot_Update:0000029c $d
+     /tmp/ccT2cdC7.s:1461   .bss.ramped_speed:00000000 ramped_speed
+     /tmp/ccT2cdC7.s:1473   .data.ff_gain_left:00000000 ff_gain_left
+     /tmp/ccT2cdC7.s:1467   .data.ff_gain_right:00000000 ff_gain_right
+     /tmp/ccT2cdC7.s:1455   .bss.settle_count.0:00000000 settle_count.0
+     /tmp/ccT2cdC7.s:869    .text.Robot_Update:000002cc $t
+     /tmp/ccT2cdC7.s:971    .text.Robot_Update:00000350 $d
+     /tmp/ccT2cdC7.s:977    .text.Robot_GoStraight:00000000 $t
+     /tmp/ccT2cdC7.s:983    .text.Robot_GoStraight:00000000 Robot_GoStraight
+     /tmp/ccT2cdC7.s:1028   .text.Robot_GoStraight:0000002c $d
+     /tmp/ccT2cdC7.s:1033   .text.Robot_Rotate:00000000 $t
+     /tmp/ccT2cdC7.s:1039   .text.Robot_Rotate:00000000 Robot_Rotate
+     /tmp/ccT2cdC7.s:1146   .text.Robot_Rotate:00000080 $d
+     /tmp/ccT2cdC7.s:1154   .text.Robot_Stop:00000000 $t
+     /tmp/ccT2cdC7.s:1160   .text.Robot_Stop:00000000 Robot_Stop
+     /tmp/ccT2cdC7.s:1224   .text.Robot_Stop:00000048 $d
+     /tmp/ccT2cdC7.s:1232   .text.Robot_SetVelocity:00000000 $t
+     /tmp/ccT2cdC7.s:1238   .text.Robot_SetVelocity:00000000 Robot_SetVelocity
+     /tmp/ccT2cdC7.s:1383   .text.Robot_SetVelocity:000000b4 $d
+     /tmp/ccT2cdC7.s:1393   .text.Robot_IsRotationDone:00000000 $t
+     /tmp/ccT2cdC7.s:1399   .text.Robot_IsRotationDone:00000000 Robot_IsRotationDone
+     /tmp/ccT2cdC7.s:1414   .text.Robot_IsRotationDone:00000008 $d
+     /tmp/ccT2cdC7.s:1419   .text.Robot_SetFFBias:00000000 $t
+     /tmp/ccT2cdC7.s:1425   .text.Robot_SetFFBias:00000000 Robot_SetFFBias
+     /tmp/ccT2cdC7.s:1446   .text.Robot_SetFFBias:0000000c $d
+     /tmp/ccT2cdC7.s:1452   .bss.settle_count.0:00000000 $d
+     /tmp/ccT2cdC7.s:1458   .bss.ramped_speed:00000000 $d
+     /tmp/ccT2cdC7.s:1464   .data.ff_gain_right:00000000 $d
+     /tmp/ccT2cdC7.s:1470   .data.ff_gain_left:00000000 $d
+     /tmp/ccT2cdC7.s:1476   .bss.filtered_speed_right:00000000 $d
+     /tmp/ccT2cdC7.s:1482   .data.filtered_speed_left:00000000 $d
+     /tmp/ccT2cdC7.s:1489   .bss.robot:00000000 $d
+
+UNDEFINED SYMBOLS
+__aeabi_fsub
+__aeabi_fcmpgt
+__aeabi_fadd
+__aeabi_fcmplt
+__aeabi_f2iz
+ARM GAS  /tmp/ccT2cdC7.s 			page 38
+
+
+Motor_Init
+Encoder_Init
+MPU6050_Init
+MPU6050_CalibrateGyro
+PID_Init
+Motor_Enable
+MPU6050_Update
+Encoder_GetDelta
+Encoder_GetSpeed
+__aeabi_fmul
+Encoder_TicksToMM
+cosf
+sinf
+Motor_SetSpeed
+MPU6050_RecalibrateBias
+PID_Compute
+PID_Reset
+Motor_Brake
+MPU6050_ResetHeading

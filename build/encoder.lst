@@ -1,0 +1,564 @@
+ARM GAS  /tmp/ccAf2w0e.s 			page 1
+
+
+   1              		.cpu cortex-m3
+   2              		.arch armv7-m
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"encoder.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.file 1 "Core/Src/encoder.c"
+  18              		.section	.text.Encoder_Init,"ax",%progbits
+  19              		.align	1
+  20              		.global	Encoder_Init
+  21              		.syntax unified
+  22              		.thumb
+  23              		.thumb_func
+  25              	Encoder_Init:
+  26              	.LFB65:
+   1:Core/Src/encoder.c **** /**
+   2:Core/Src/encoder.c ****  * @file    encoder.c
+   3:Core/Src/encoder.c ****  * @brief   Quadrature encoder reading via TIM2 (right) and TIM3 (left)
+   4:Core/Src/encoder.c ****  */
+   5:Core/Src/encoder.c **** #include "encoder.h"
+   6:Core/Src/encoder.c **** #include "main.h"
+   7:Core/Src/encoder.c **** 
+   8:Core/Src/encoder.c **** static TIM_HandleTypeDef htim2; /* Right encoder */
+   9:Core/Src/encoder.c **** static TIM_HandleTypeDef htim3; /* Left encoder  */
+  10:Core/Src/encoder.c **** 
+  11:Core/Src/encoder.c **** static int16_t last_count_left = 0;
+  12:Core/Src/encoder.c **** static int16_t last_count_right = 0;
+  13:Core/Src/encoder.c **** 
+  14:Core/Src/encoder.c **** void Encoder_Init(void) {
+  27              		.loc 1 14 25 view -0
+  28              		.cfi_startproc
+  29              		@ args = 0, pretend = 0, frame = 48
+  30              		@ frame_needed = 0, uses_anonymous_args = 0
+  31 0000 2DE9F043 		push	{r4, r5, r6, r7, r8, r9, lr}
+  32              	.LCFI0:
+  33              		.cfi_def_cfa_offset 28
+  34              		.cfi_offset 4, -28
+  35              		.cfi_offset 5, -24
+  36              		.cfi_offset 6, -20
+  37              		.cfi_offset 7, -16
+  38              		.cfi_offset 8, -12
+  39              		.cfi_offset 9, -8
+  40              		.cfi_offset 14, -4
+  41 0004 8DB0     		sub	sp, sp, #52
+  42              	.LCFI1:
+  43              		.cfi_def_cfa_offset 80
+  15:Core/Src/encoder.c ****   TIM_Encoder_InitTypeDef sConfig = {0};
+ARM GAS  /tmp/ccAf2w0e.s 			page 2
+
+
+  44              		.loc 1 15 3 view .LVU1
+  45              		.loc 1 15 27 is_stmt 0 view .LVU2
+  46 0006 0DF10C08 		add	r8, sp, #12
+  47 000a 2422     		movs	r2, #36
+  48 000c 0021     		movs	r1, #0
+  49 000e 4046     		mov	r0, r8
+  50 0010 FFF7FEFF 		bl	memset
+  51              	.LVL0:
+  16:Core/Src/encoder.c ****   TIM_MasterConfigTypeDef sMasterConfig = {0};
+  52              		.loc 1 16 3 is_stmt 1 view .LVU3
+  53              		.loc 1 16 27 is_stmt 0 view .LVU4
+  54 0014 01AF     		add	r7, sp, #4
+  55 0016 0024     		movs	r4, #0
+  56 0018 0194     		str	r4, [sp, #4]
+  57 001a 0294     		str	r4, [sp, #8]
+  17:Core/Src/encoder.c **** 
+  18:Core/Src/encoder.c ****   /* ----- TIM3: Left encoder (PA6=CH1, PA7=CH2) ----- */
+  19:Core/Src/encoder.c ****   htim3.Instance = TIM3;
+  58              		.loc 1 19 3 is_stmt 1 view .LVU5
+  59              		.loc 1 19 18 is_stmt 0 view .LVU6
+  60 001c 204E     		ldr	r6, .L3
+  61 001e 214B     		ldr	r3, .L3+4
+  62 0020 3360     		str	r3, [r6]
+  20:Core/Src/encoder.c ****   htim3.Init.Prescaler = 0;
+  63              		.loc 1 20 3 is_stmt 1 view .LVU7
+  64              		.loc 1 20 24 is_stmt 0 view .LVU8
+  65 0022 7460     		str	r4, [r6, #4]
+  21:Core/Src/encoder.c ****   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  66              		.loc 1 21 3 is_stmt 1 view .LVU9
+  67              		.loc 1 21 26 is_stmt 0 view .LVU10
+  68 0024 B460     		str	r4, [r6, #8]
+  22:Core/Src/encoder.c ****   htim3.Init.Period = 0xFFFF; /* Full 16-bit range */
+  69              		.loc 1 22 3 is_stmt 1 view .LVU11
+  70              		.loc 1 22 21 is_stmt 0 view .LVU12
+  71 0026 4FF6FF79 		movw	r9, #65535
+  72 002a C6F80C90 		str	r9, [r6, #12]
+  23:Core/Src/encoder.c ****   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  73              		.loc 1 23 3 is_stmt 1 view .LVU13
+  74              		.loc 1 23 28 is_stmt 0 view .LVU14
+  75 002e 3461     		str	r4, [r6, #16]
+  24:Core/Src/encoder.c ****   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  76              		.loc 1 24 3 is_stmt 1 view .LVU15
+  77              		.loc 1 24 32 is_stmt 0 view .LVU16
+  78 0030 B461     		str	r4, [r6, #24]
+  25:Core/Src/encoder.c **** 
+  26:Core/Src/encoder.c ****   sConfig.EncoderMode = TIM_ENCODERMODE_TI12; /* Count on both edges */
+  79              		.loc 1 26 3 is_stmt 1 view .LVU17
+  80              		.loc 1 26 23 is_stmt 0 view .LVU18
+  81 0032 0323     		movs	r3, #3
+  82 0034 0393     		str	r3, [sp, #12]
+  27:Core/Src/encoder.c ****   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  83              		.loc 1 27 3 is_stmt 1 view .LVU19
+  28:Core/Src/encoder.c ****   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  84              		.loc 1 28 3 view .LVU20
+  85              		.loc 1 28 24 is_stmt 0 view .LVU21
+  86 0036 0122     		movs	r2, #1
+  87 0038 0592     		str	r2, [sp, #20]
+ARM GAS  /tmp/ccAf2w0e.s 			page 3
+
+
+  29:Core/Src/encoder.c ****   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  88              		.loc 1 29 3 is_stmt 1 view .LVU22
+  30:Core/Src/encoder.c ****   sConfig.IC1Filter = 0x0F; /* Max digital filter — good for noisy signals */
+  89              		.loc 1 30 3 view .LVU23
+  90              		.loc 1 30 21 is_stmt 0 view .LVU24
+  91 003a 0F23     		movs	r3, #15
+  92 003c 0793     		str	r3, [sp, #28]
+  31:Core/Src/encoder.c ****   sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  93              		.loc 1 31 3 is_stmt 1 view .LVU25
+  32:Core/Src/encoder.c ****   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  94              		.loc 1 32 3 view .LVU26
+  95              		.loc 1 32 24 is_stmt 0 view .LVU27
+  96 003e 0992     		str	r2, [sp, #36]
+  33:Core/Src/encoder.c ****   sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  97              		.loc 1 33 3 is_stmt 1 view .LVU28
+  34:Core/Src/encoder.c ****   sConfig.IC2Filter = 0x0F;
+  98              		.loc 1 34 3 view .LVU29
+  99              		.loc 1 34 21 is_stmt 0 view .LVU30
+ 100 0040 0B93     		str	r3, [sp, #44]
+  35:Core/Src/encoder.c **** 
+  36:Core/Src/encoder.c ****   HAL_TIM_Encoder_Init(&htim3, &sConfig);
+ 101              		.loc 1 36 3 is_stmt 1 view .LVU31
+ 102 0042 4146     		mov	r1, r8
+ 103 0044 3046     		mov	r0, r6
+ 104 0046 FFF7FEFF 		bl	HAL_TIM_Encoder_Init
+ 105              	.LVL1:
+  37:Core/Src/encoder.c **** 
+  38:Core/Src/encoder.c ****   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+ 106              		.loc 1 38 3 view .LVU32
+ 107              		.loc 1 38 37 is_stmt 0 view .LVU33
+ 108 004a 0194     		str	r4, [sp, #4]
+  39:Core/Src/encoder.c ****   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+ 109              		.loc 1 39 3 is_stmt 1 view .LVU34
+ 110              		.loc 1 39 33 is_stmt 0 view .LVU35
+ 111 004c 0294     		str	r4, [sp, #8]
+  40:Core/Src/encoder.c ****   HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig);
+ 112              		.loc 1 40 3 is_stmt 1 view .LVU36
+ 113 004e 3946     		mov	r1, r7
+ 114 0050 3046     		mov	r0, r6
+ 115 0052 FFF7FEFF 		bl	HAL_TIMEx_MasterConfigSynchronization
+ 116              	.LVL2:
+  41:Core/Src/encoder.c **** 
+  42:Core/Src/encoder.c ****   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+ 117              		.loc 1 42 3 view .LVU37
+ 118 0056 3C21     		movs	r1, #60
+ 119 0058 3046     		mov	r0, r6
+ 120 005a FFF7FEFF 		bl	HAL_TIM_Encoder_Start
+ 121              	.LVL3:
+  43:Core/Src/encoder.c **** 
+  44:Core/Src/encoder.c ****   /* ----- TIM2: Right encoder (PA0=CH1, PA1=CH2) ----- */
+  45:Core/Src/encoder.c ****   htim2.Instance = TIM2;
+ 122              		.loc 1 45 3 view .LVU38
+ 123              		.loc 1 45 18 is_stmt 0 view .LVU39
+ 124 005e 124D     		ldr	r5, .L3+8
+ 125 0060 4FF08043 		mov	r3, #1073741824
+ 126 0064 2B60     		str	r3, [r5]
+  46:Core/Src/encoder.c ****   htim2.Init.Prescaler = 0;
+ARM GAS  /tmp/ccAf2w0e.s 			page 4
+
+
+ 127              		.loc 1 46 3 is_stmt 1 view .LVU40
+ 128              		.loc 1 46 24 is_stmt 0 view .LVU41
+ 129 0066 6C60     		str	r4, [r5, #4]
+  47:Core/Src/encoder.c ****   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+ 130              		.loc 1 47 3 is_stmt 1 view .LVU42
+ 131              		.loc 1 47 26 is_stmt 0 view .LVU43
+ 132 0068 AC60     		str	r4, [r5, #8]
+  48:Core/Src/encoder.c ****   htim2.Init.Period = 0xFFFF;
+ 133              		.loc 1 48 3 is_stmt 1 view .LVU44
+ 134              		.loc 1 48 21 is_stmt 0 view .LVU45
+ 135 006a C5F80C90 		str	r9, [r5, #12]
+  49:Core/Src/encoder.c ****   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+ 136              		.loc 1 49 3 is_stmt 1 view .LVU46
+ 137              		.loc 1 49 28 is_stmt 0 view .LVU47
+ 138 006e 2C61     		str	r4, [r5, #16]
+  50:Core/Src/encoder.c ****   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+ 139              		.loc 1 50 3 is_stmt 1 view .LVU48
+ 140              		.loc 1 50 32 is_stmt 0 view .LVU49
+ 141 0070 AC61     		str	r4, [r5, #24]
+  51:Core/Src/encoder.c **** 
+  52:Core/Src/encoder.c ****   HAL_TIM_Encoder_Init(&htim2, &sConfig);
+ 142              		.loc 1 52 3 is_stmt 1 view .LVU50
+ 143 0072 4146     		mov	r1, r8
+ 144 0074 2846     		mov	r0, r5
+ 145 0076 FFF7FEFF 		bl	HAL_TIM_Encoder_Init
+ 146              	.LVL4:
+  53:Core/Src/encoder.c ****   HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig);
+ 147              		.loc 1 53 3 view .LVU51
+ 148 007a 3946     		mov	r1, r7
+ 149 007c 2846     		mov	r0, r5
+ 150 007e FFF7FEFF 		bl	HAL_TIMEx_MasterConfigSynchronization
+ 151              	.LVL5:
+  54:Core/Src/encoder.c ****   HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+ 152              		.loc 1 54 3 view .LVU52
+ 153 0082 3C21     		movs	r1, #60
+ 154 0084 2846     		mov	r0, r5
+ 155 0086 FFF7FEFF 		bl	HAL_TIM_Encoder_Start
+ 156              	.LVL6:
+  55:Core/Src/encoder.c **** 
+  56:Core/Src/encoder.c ****   /* Reset counters */
+  57:Core/Src/encoder.c ****   __HAL_TIM_SET_COUNTER(&htim3, 0);
+ 157              		.loc 1 57 3 view .LVU53
+ 158 008a 3368     		ldr	r3, [r6]
+ 159 008c 5C62     		str	r4, [r3, #36]
+  58:Core/Src/encoder.c ****   __HAL_TIM_SET_COUNTER(&htim2, 0);
+ 160              		.loc 1 58 3 view .LVU54
+ 161 008e 2B68     		ldr	r3, [r5]
+ 162 0090 5C62     		str	r4, [r3, #36]
+  59:Core/Src/encoder.c ****   last_count_left = 0;
+ 163              		.loc 1 59 3 view .LVU55
+ 164              		.loc 1 59 19 is_stmt 0 view .LVU56
+ 165 0092 064B     		ldr	r3, .L3+12
+ 166 0094 1C80     		strh	r4, [r3]	@ movhi
+  60:Core/Src/encoder.c ****   last_count_right = 0;
+ 167              		.loc 1 60 3 is_stmt 1 view .LVU57
+ 168              		.loc 1 60 20 is_stmt 0 view .LVU58
+ 169 0096 064B     		ldr	r3, .L3+16
+ARM GAS  /tmp/ccAf2w0e.s 			page 5
+
+
+ 170 0098 1C80     		strh	r4, [r3]	@ movhi
+  61:Core/Src/encoder.c **** }
+ 171              		.loc 1 61 1 view .LVU59
+ 172 009a 0DB0     		add	sp, sp, #52
+ 173              	.LCFI2:
+ 174              		.cfi_def_cfa_offset 28
+ 175              		@ sp needed
+ 176 009c BDE8F083 		pop	{r4, r5, r6, r7, r8, r9, pc}
+ 177              	.L4:
+ 178              		.align	2
+ 179              	.L3:
+ 180 00a0 00000000 		.word	htim3
+ 181 00a4 00040040 		.word	1073742848
+ 182 00a8 00000000 		.word	htim2
+ 183 00ac 00000000 		.word	last_count_left
+ 184 00b0 00000000 		.word	last_count_right
+ 185              		.cfi_endproc
+ 186              	.LFE65:
+ 188              		.section	.text.Encoder_GetDelta,"ax",%progbits
+ 189              		.align	1
+ 190              		.global	Encoder_GetDelta
+ 191              		.syntax unified
+ 192              		.thumb
+ 193              		.thumb_func
+ 195              	Encoder_GetDelta:
+ 196              	.LVL7:
+ 197              	.LFB66:
+  62:Core/Src/encoder.c **** 
+  63:Core/Src/encoder.c **** int16_t Encoder_GetDelta(Encoder_ID enc) {
+ 198              		.loc 1 63 42 is_stmt 1 view -0
+ 199              		.cfi_startproc
+ 200              		@ args = 0, pretend = 0, frame = 0
+ 201              		@ frame_needed = 0, uses_anonymous_args = 0
+ 202              		@ link register save eliminated.
+  64:Core/Src/encoder.c ****   int16_t current, delta;
+ 203              		.loc 1 64 3 view .LVU61
+  65:Core/Src/encoder.c **** 
+  66:Core/Src/encoder.c ****   if (enc == ENCODER_LEFT) {
+ 204              		.loc 1 66 3 view .LVU62
+ 205              		.loc 1 66 6 is_stmt 0 view .LVU63
+ 206 0000 40B9     		cbnz	r0, .L6
+  67:Core/Src/encoder.c ****     current = (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
+ 207              		.loc 1 67 5 is_stmt 1 view .LVU64
+ 208              		.loc 1 67 24 is_stmt 0 view .LVU65
+ 209 0002 094B     		ldr	r3, .L8
+ 210 0004 1B68     		ldr	r3, [r3]
+ 211 0006 5A6A     		ldr	r2, [r3, #36]
+ 212              	.LVL8:
+  68:Core/Src/encoder.c ****     delta = current - last_count_left;
+ 213              		.loc 1 68 5 is_stmt 1 view .LVU66
+ 214              		.loc 1 68 21 is_stmt 0 view .LVU67
+ 215 0008 084B     		ldr	r3, .L8+4
+ 216 000a 1888     		ldrh	r0, [r3]
+ 217              	.LVL9:
+ 218              		.loc 1 68 21 view .LVU68
+ 219 000c 101A     		subs	r0, r2, r0
+ 220              		.loc 1 68 11 view .LVU69
+ARM GAS  /tmp/ccAf2w0e.s 			page 6
+
+
+ 221 000e 00B2     		sxth	r0, r0
+ 222              	.LVL10:
+  69:Core/Src/encoder.c ****     last_count_left = current;
+ 223              		.loc 1 69 5 is_stmt 1 view .LVU70
+ 224              		.loc 1 69 21 is_stmt 0 view .LVU71
+ 225 0010 1A80     		strh	r2, [r3]	@ movhi
+ 226 0012 7047     		bx	lr
+ 227              	.LVL11:
+ 228              	.L6:
+  70:Core/Src/encoder.c ****   } else {
+  71:Core/Src/encoder.c ****     current = (int16_t)__HAL_TIM_GET_COUNTER(&htim2);
+ 229              		.loc 1 71 5 is_stmt 1 view .LVU72
+ 230              		.loc 1 71 24 is_stmt 0 view .LVU73
+ 231 0014 064B     		ldr	r3, .L8+8
+ 232 0016 1B68     		ldr	r3, [r3]
+ 233 0018 5A6A     		ldr	r2, [r3, #36]
+ 234              	.LVL12:
+  72:Core/Src/encoder.c ****     delta = current - last_count_right;
+ 235              		.loc 1 72 5 is_stmt 1 view .LVU74
+ 236              		.loc 1 72 21 is_stmt 0 view .LVU75
+ 237 001a 91B2     		uxth	r1, r2
+ 238 001c 054B     		ldr	r3, .L8+12
+ 239 001e 1888     		ldrh	r0, [r3]
+ 240              	.LVL13:
+  73:Core/Src/encoder.c ****     last_count_right = current;
+ 241              		.loc 1 73 5 is_stmt 1 view .LVU76
+ 242              		.loc 1 73 22 is_stmt 0 view .LVU77
+ 243 0020 1A80     		strh	r2, [r3]	@ movhi
+ 244              	.LVL14:
+  74:Core/Src/encoder.c ****     delta = -delta; /* Right motor is mirrored — invert encoder direction */
+ 245              		.loc 1 74 5 is_stmt 1 view .LVU78
+ 246              		.loc 1 74 11 is_stmt 0 view .LVU79
+ 247 0022 401A     		subs	r0, r0, r1
+ 248              	.LVL15:
+ 249              		.loc 1 74 11 view .LVU80
+ 250 0024 00B2     		sxth	r0, r0
+ 251              	.LVL16:
+  75:Core/Src/encoder.c ****   }
+  76:Core/Src/encoder.c **** 
+  77:Core/Src/encoder.c ****   return delta;
+ 252              		.loc 1 77 3 is_stmt 1 view .LVU81
+  78:Core/Src/encoder.c **** }
+ 253              		.loc 1 78 1 is_stmt 0 view .LVU82
+ 254 0026 7047     		bx	lr
+ 255              	.L9:
+ 256              		.align	2
+ 257              	.L8:
+ 258 0028 00000000 		.word	htim3
+ 259 002c 00000000 		.word	last_count_left
+ 260 0030 00000000 		.word	htim2
+ 261 0034 00000000 		.word	last_count_right
+ 262              		.cfi_endproc
+ 263              	.LFE66:
+ 265              		.section	.text.Encoder_GetCount,"ax",%progbits
+ 266              		.align	1
+ 267              		.global	Encoder_GetCount
+ 268              		.syntax unified
+ARM GAS  /tmp/ccAf2w0e.s 			page 7
+
+
+ 269              		.thumb
+ 270              		.thumb_func
+ 272              	Encoder_GetCount:
+ 273              	.LVL17:
+ 274              	.LFB67:
+  79:Core/Src/encoder.c **** 
+  80:Core/Src/encoder.c **** uint16_t Encoder_GetCount(Encoder_ID enc) {
+ 275              		.loc 1 80 43 is_stmt 1 view -0
+ 276              		.cfi_startproc
+ 277              		@ args = 0, pretend = 0, frame = 0
+ 278              		@ frame_needed = 0, uses_anonymous_args = 0
+ 279              		@ link register save eliminated.
+  81:Core/Src/encoder.c ****   if (enc == ENCODER_LEFT)
+ 280              		.loc 1 81 3 view .LVU84
+ 281              		.loc 1 81 6 is_stmt 0 view .LVU85
+ 282 0000 20B9     		cbnz	r0, .L11
+  82:Core/Src/encoder.c ****     return (uint16_t)__HAL_TIM_GET_COUNTER(&htim3);
+ 283              		.loc 1 82 5 is_stmt 1 view .LVU86
+ 284              		.loc 1 82 22 is_stmt 0 view .LVU87
+ 285 0002 054B     		ldr	r3, .L13
+ 286 0004 1B68     		ldr	r3, [r3]
+ 287 0006 586A     		ldr	r0, [r3, #36]
+ 288              	.LVL18:
+ 289              		.loc 1 82 12 view .LVU88
+ 290 0008 80B2     		uxth	r0, r0
+ 291 000a 7047     		bx	lr
+ 292              	.LVL19:
+ 293              	.L11:
+  83:Core/Src/encoder.c ****   else
+  84:Core/Src/encoder.c ****     return (uint16_t)__HAL_TIM_GET_COUNTER(&htim2);
+ 294              		.loc 1 84 5 is_stmt 1 view .LVU89
+ 295              		.loc 1 84 22 is_stmt 0 view .LVU90
+ 296 000c 034B     		ldr	r3, .L13+4
+ 297 000e 1B68     		ldr	r3, [r3]
+ 298 0010 586A     		ldr	r0, [r3, #36]
+ 299              	.LVL20:
+ 300              		.loc 1 84 12 view .LVU91
+ 301 0012 80B2     		uxth	r0, r0
+  85:Core/Src/encoder.c **** }
+ 302              		.loc 1 85 1 view .LVU92
+ 303 0014 7047     		bx	lr
+ 304              	.L14:
+ 305 0016 00BF     		.align	2
+ 306              	.L13:
+ 307 0018 00000000 		.word	htim3
+ 308 001c 00000000 		.word	htim2
+ 309              		.cfi_endproc
+ 310              	.LFE67:
+ 312              		.section	.text.Encoder_TicksToMM,"ax",%progbits
+ 313              		.align	1
+ 314              		.global	Encoder_TicksToMM
+ 315              		.syntax unified
+ 316              		.thumb
+ 317              		.thumb_func
+ 319              	Encoder_TicksToMM:
+ 320              	.LVL21:
+ 321              	.LFB68:
+ARM GAS  /tmp/ccAf2w0e.s 			page 8
+
+
+  86:Core/Src/encoder.c **** 
+  87:Core/Src/encoder.c **** float Encoder_TicksToMM(int16_t delta_ticks) {
+ 322              		.loc 1 87 46 is_stmt 1 view -0
+ 323              		.cfi_startproc
+ 324              		@ args = 0, pretend = 0, frame = 0
+ 325              		@ frame_needed = 0, uses_anonymous_args = 0
+ 326              		.loc 1 87 46 is_stmt 0 view .LVU94
+ 327 0000 08B5     		push	{r3, lr}
+ 328              	.LCFI3:
+ 329              		.cfi_def_cfa_offset 8
+ 330              		.cfi_offset 3, -8
+ 331              		.cfi_offset 14, -4
+  88:Core/Src/encoder.c ****   return (float)delta_ticks * MM_PER_TICK;
+ 332              		.loc 1 88 3 is_stmt 1 view .LVU95
+ 333              		.loc 1 88 10 is_stmt 0 view .LVU96
+ 334 0002 FFF7FEFF 		bl	__aeabi_i2f
+ 335              	.LVL22:
+ 336              		.loc 1 88 29 view .LVU97
+ 337 0006 0249     		ldr	r1, .L17
+ 338 0008 FFF7FEFF 		bl	__aeabi_fmul
+ 339              	.LVL23:
+  89:Core/Src/encoder.c **** }
+ 340              		.loc 1 89 1 view .LVU98
+ 341 000c 08BD     		pop	{r3, pc}
+ 342              	.L18:
+ 343 000e 00BF     		.align	2
+ 344              	.L17:
+ 345 0010 FF01043C 		.word	1006895615
+ 346              		.cfi_endproc
+ 347              	.LFE68:
+ 349              		.section	.text.Encoder_GetSpeed,"ax",%progbits
+ 350              		.align	1
+ 351              		.global	Encoder_GetSpeed
+ 352              		.syntax unified
+ 353              		.thumb
+ 354              		.thumb_func
+ 356              	Encoder_GetSpeed:
+ 357              	.LVL24:
+ 358              	.LFB69:
+  90:Core/Src/encoder.c **** 
+  91:Core/Src/encoder.c **** float Encoder_GetSpeed(int16_t delta_ticks, float dt) {
+ 359              		.loc 1 91 55 is_stmt 1 view -0
+ 360              		.cfi_startproc
+ 361              		@ args = 0, pretend = 0, frame = 0
+ 362              		@ frame_needed = 0, uses_anonymous_args = 0
+ 363              		.loc 1 91 55 is_stmt 0 view .LVU100
+ 364 0000 10B5     		push	{r4, lr}
+ 365              	.LCFI4:
+ 366              		.cfi_def_cfa_offset 8
+ 367              		.cfi_offset 4, -8
+ 368              		.cfi_offset 14, -4
+ 369 0002 0C46     		mov	r4, r1
+  92:Core/Src/encoder.c ****   return (float)delta_ticks / dt; /* ticks/second */
+ 370              		.loc 1 92 3 is_stmt 1 view .LVU101
+ 371              		.loc 1 92 10 is_stmt 0 view .LVU102
+ 372 0004 FFF7FEFF 		bl	__aeabi_i2f
+ 373              	.LVL25:
+ARM GAS  /tmp/ccAf2w0e.s 			page 9
+
+
+ 374              		.loc 1 92 29 view .LVU103
+ 375 0008 2146     		mov	r1, r4
+ 376 000a FFF7FEFF 		bl	__aeabi_fdiv
+ 377              	.LVL26:
+  93:Core/Src/encoder.c **** }
+ 378              		.loc 1 93 1 view .LVU104
+ 379 000e 10BD     		pop	{r4, pc}
+ 380              		.loc 1 93 1 view .LVU105
+ 381              		.cfi_endproc
+ 382              	.LFE69:
+ 384              		.section	.bss.last_count_right,"aw",%nobits
+ 385              		.align	1
+ 388              	last_count_right:
+ 389 0000 0000     		.space	2
+ 390              		.section	.bss.last_count_left,"aw",%nobits
+ 391              		.align	1
+ 394              	last_count_left:
+ 395 0000 0000     		.space	2
+ 396              		.section	.bss.htim3,"aw",%nobits
+ 397              		.align	2
+ 400              	htim3:
+ 401 0000 00000000 		.space	72
+ 401      00000000 
+ 401      00000000 
+ 401      00000000 
+ 401      00000000 
+ 402              		.section	.bss.htim2,"aw",%nobits
+ 403              		.align	2
+ 406              	htim2:
+ 407 0000 00000000 		.space	72
+ 407      00000000 
+ 407      00000000 
+ 407      00000000 
+ 407      00000000 
+ 408              		.text
+ 409              	.Letext0:
+ 410              		.file 2 "/usr/arm-none-eabi/include/machine/_default_types.h"
+ 411              		.file 3 "/usr/arm-none-eabi/include/sys/_stdint.h"
+ 412              		.file 4 "Drivers/CMSIS/Device/ST/STM32F1xx/Include/stm32f103xb.h"
+ 413              		.file 5 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_def.h"
+ 414              		.file 6 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_dma.h"
+ 415              		.file 7 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h"
+ 416              		.file 8 "Core/Inc/encoder.h"
+ 417              		.file 9 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h"
+ 418              		.file 10 "<built-in>"
+ARM GAS  /tmp/ccAf2w0e.s 			page 10
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 encoder.c
+     /tmp/ccAf2w0e.s:19     .text.Encoder_Init:00000000 $t
+     /tmp/ccAf2w0e.s:25     .text.Encoder_Init:00000000 Encoder_Init
+     /tmp/ccAf2w0e.s:180    .text.Encoder_Init:000000a0 $d
+     /tmp/ccAf2w0e.s:400    .bss.htim3:00000000 htim3
+     /tmp/ccAf2w0e.s:406    .bss.htim2:00000000 htim2
+     /tmp/ccAf2w0e.s:394    .bss.last_count_left:00000000 last_count_left
+     /tmp/ccAf2w0e.s:388    .bss.last_count_right:00000000 last_count_right
+     /tmp/ccAf2w0e.s:189    .text.Encoder_GetDelta:00000000 $t
+     /tmp/ccAf2w0e.s:195    .text.Encoder_GetDelta:00000000 Encoder_GetDelta
+     /tmp/ccAf2w0e.s:258    .text.Encoder_GetDelta:00000028 $d
+     /tmp/ccAf2w0e.s:266    .text.Encoder_GetCount:00000000 $t
+     /tmp/ccAf2w0e.s:272    .text.Encoder_GetCount:00000000 Encoder_GetCount
+     /tmp/ccAf2w0e.s:307    .text.Encoder_GetCount:00000018 $d
+     /tmp/ccAf2w0e.s:313    .text.Encoder_TicksToMM:00000000 $t
+     /tmp/ccAf2w0e.s:319    .text.Encoder_TicksToMM:00000000 Encoder_TicksToMM
+     /tmp/ccAf2w0e.s:345    .text.Encoder_TicksToMM:00000010 $d
+     /tmp/ccAf2w0e.s:350    .text.Encoder_GetSpeed:00000000 $t
+     /tmp/ccAf2w0e.s:356    .text.Encoder_GetSpeed:00000000 Encoder_GetSpeed
+     /tmp/ccAf2w0e.s:385    .bss.last_count_right:00000000 $d
+     /tmp/ccAf2w0e.s:391    .bss.last_count_left:00000000 $d
+     /tmp/ccAf2w0e.s:397    .bss.htim3:00000000 $d
+     /tmp/ccAf2w0e.s:403    .bss.htim2:00000000 $d
+
+UNDEFINED SYMBOLS
+memset
+HAL_TIM_Encoder_Init
+HAL_TIMEx_MasterConfigSynchronization
+HAL_TIM_Encoder_Start
+__aeabi_i2f
+__aeabi_fmul
+__aeabi_fdiv

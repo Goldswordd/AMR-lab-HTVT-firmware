@@ -1,0 +1,407 @@
+ARM GAS  /tmp/ccIwjxv4.s 			page 1
+
+
+   1              		.cpu cortex-m3
+   2              		.arch armv7-m
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"stm32f1xx_it.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.file 1 "Core/Src/stm32f1xx_it.c"
+  18              		.section	.text.NMI_Handler,"ax",%progbits
+  19              		.align	1
+  20              		.global	NMI_Handler
+  21              		.syntax unified
+  22              		.thumb
+  23              		.thumb_func
+  25              	NMI_Handler:
+  26              	.LFB65:
+   1:Core/Src/stm32f1xx_it.c **** /**
+   2:Core/Src/stm32f1xx_it.c ****  * @file    stm32f1xx_it.c
+   3:Core/Src/stm32f1xx_it.c ****  * @brief   Interrupt handlers — SysTick drives control loop flag
+   4:Core/Src/stm32f1xx_it.c ****  */
+   5:Core/Src/stm32f1xx_it.c **** #include "main.h"
+   6:Core/Src/stm32f1xx_it.c **** #include "stm32f1xx_hal.h"
+   7:Core/Src/stm32f1xx_it.c **** 
+   8:Core/Src/stm32f1xx_it.c **** extern PCD_HandleTypeDef hpcd_USB_FS;
+   9:Core/Src/stm32f1xx_it.c **** 
+  10:Core/Src/stm32f1xx_it.c **** /* ========================== Exported variables ========================== */
+  11:Core/Src/stm32f1xx_it.c **** volatile uint8_t control_flag = 0; /* Set every 5ms for control loop */
+  12:Core/Src/stm32f1xx_it.c **** volatile uint32_t systick_ms = 0;  /* Free-running ms counter */
+  13:Core/Src/stm32f1xx_it.c **** 
+  14:Core/Src/stm32f1xx_it.c **** static volatile uint8_t systick_divider = 0;
+  15:Core/Src/stm32f1xx_it.c **** 
+  16:Core/Src/stm32f1xx_it.c **** /* ========================== Cortex-M3 Handlers ========================== */
+  17:Core/Src/stm32f1xx_it.c **** 
+  18:Core/Src/stm32f1xx_it.c **** void NMI_Handler(void) {}
+  27              		.loc 1 18 24 view -0
+  28              		.cfi_startproc
+  29              		@ args = 0, pretend = 0, frame = 0
+  30              		@ frame_needed = 0, uses_anonymous_args = 0
+  31              		@ link register save eliminated.
+  32              		.loc 1 18 25 view .LVU1
+  33 0000 7047     		bx	lr
+  34              		.cfi_endproc
+  35              	.LFE65:
+  37              		.section	.text.HardFault_Handler,"ax",%progbits
+  38              		.align	1
+  39              		.global	HardFault_Handler
+  40              		.syntax unified
+  41              		.thumb
+ARM GAS  /tmp/ccIwjxv4.s 			page 2
+
+
+  42              		.thumb_func
+  44              	HardFault_Handler:
+  45              	.LFB66:
+  19:Core/Src/stm32f1xx_it.c **** 
+  20:Core/Src/stm32f1xx_it.c **** void HardFault_Handler(void) {
+  46              		.loc 1 20 30 view -0
+  47              		.cfi_startproc
+  48              		@ Volatile: function does not return.
+  49              		@ args = 0, pretend = 0, frame = 0
+  50              		@ frame_needed = 0, uses_anonymous_args = 0
+  51              		@ link register save eliminated.
+  52              	.L3:
+  21:Core/Src/stm32f1xx_it.c ****   while (1) {
+  53              		.loc 1 21 3 view .LVU3
+  22:Core/Src/stm32f1xx_it.c ****   }
+  54              		.loc 1 22 3 view .LVU4
+  21:Core/Src/stm32f1xx_it.c ****   while (1) {
+  55              		.loc 1 21 9 view .LVU5
+  56 0000 FEE7     		b	.L3
+  57              		.cfi_endproc
+  58              	.LFE66:
+  60              		.section	.text.MemManage_Handler,"ax",%progbits
+  61              		.align	1
+  62              		.global	MemManage_Handler
+  63              		.syntax unified
+  64              		.thumb
+  65              		.thumb_func
+  67              	MemManage_Handler:
+  68              	.LFB67:
+  23:Core/Src/stm32f1xx_it.c **** }
+  24:Core/Src/stm32f1xx_it.c **** 
+  25:Core/Src/stm32f1xx_it.c **** void MemManage_Handler(void) {
+  69              		.loc 1 25 30 view -0
+  70              		.cfi_startproc
+  71              		@ Volatile: function does not return.
+  72              		@ args = 0, pretend = 0, frame = 0
+  73              		@ frame_needed = 0, uses_anonymous_args = 0
+  74              		@ link register save eliminated.
+  75              	.L5:
+  26:Core/Src/stm32f1xx_it.c ****   while (1) {
+  76              		.loc 1 26 3 view .LVU7
+  27:Core/Src/stm32f1xx_it.c ****   }
+  77              		.loc 1 27 3 view .LVU8
+  26:Core/Src/stm32f1xx_it.c ****   while (1) {
+  78              		.loc 1 26 9 view .LVU9
+  79 0000 FEE7     		b	.L5
+  80              		.cfi_endproc
+  81              	.LFE67:
+  83              		.section	.text.BusFault_Handler,"ax",%progbits
+  84              		.align	1
+  85              		.global	BusFault_Handler
+  86              		.syntax unified
+  87              		.thumb
+  88              		.thumb_func
+  90              	BusFault_Handler:
+  91              	.LFB68:
+  28:Core/Src/stm32f1xx_it.c **** }
+ARM GAS  /tmp/ccIwjxv4.s 			page 3
+
+
+  29:Core/Src/stm32f1xx_it.c **** 
+  30:Core/Src/stm32f1xx_it.c **** void BusFault_Handler(void) {
+  92              		.loc 1 30 29 view -0
+  93              		.cfi_startproc
+  94              		@ Volatile: function does not return.
+  95              		@ args = 0, pretend = 0, frame = 0
+  96              		@ frame_needed = 0, uses_anonymous_args = 0
+  97              		@ link register save eliminated.
+  98              	.L7:
+  31:Core/Src/stm32f1xx_it.c ****   while (1) {
+  99              		.loc 1 31 3 view .LVU11
+  32:Core/Src/stm32f1xx_it.c ****   }
+ 100              		.loc 1 32 3 view .LVU12
+  31:Core/Src/stm32f1xx_it.c ****   while (1) {
+ 101              		.loc 1 31 9 view .LVU13
+ 102 0000 FEE7     		b	.L7
+ 103              		.cfi_endproc
+ 104              	.LFE68:
+ 106              		.section	.text.UsageFault_Handler,"ax",%progbits
+ 107              		.align	1
+ 108              		.global	UsageFault_Handler
+ 109              		.syntax unified
+ 110              		.thumb
+ 111              		.thumb_func
+ 113              	UsageFault_Handler:
+ 114              	.LFB69:
+  33:Core/Src/stm32f1xx_it.c **** }
+  34:Core/Src/stm32f1xx_it.c **** 
+  35:Core/Src/stm32f1xx_it.c **** void UsageFault_Handler(void) {
+ 115              		.loc 1 35 31 view -0
+ 116              		.cfi_startproc
+ 117              		@ Volatile: function does not return.
+ 118              		@ args = 0, pretend = 0, frame = 0
+ 119              		@ frame_needed = 0, uses_anonymous_args = 0
+ 120              		@ link register save eliminated.
+ 121              	.L9:
+  36:Core/Src/stm32f1xx_it.c ****   while (1) {
+ 122              		.loc 1 36 3 view .LVU15
+  37:Core/Src/stm32f1xx_it.c ****   }
+ 123              		.loc 1 37 3 view .LVU16
+  36:Core/Src/stm32f1xx_it.c ****   while (1) {
+ 124              		.loc 1 36 9 view .LVU17
+ 125 0000 FEE7     		b	.L9
+ 126              		.cfi_endproc
+ 127              	.LFE69:
+ 129              		.section	.text.SVC_Handler,"ax",%progbits
+ 130              		.align	1
+ 131              		.global	SVC_Handler
+ 132              		.syntax unified
+ 133              		.thumb
+ 134              		.thumb_func
+ 136              	SVC_Handler:
+ 137              	.LFB70:
+  38:Core/Src/stm32f1xx_it.c **** }
+  39:Core/Src/stm32f1xx_it.c **** 
+  40:Core/Src/stm32f1xx_it.c **** void SVC_Handler(void) {}
+ 138              		.loc 1 40 24 view -0
+ARM GAS  /tmp/ccIwjxv4.s 			page 4
+
+
+ 139              		.cfi_startproc
+ 140              		@ args = 0, pretend = 0, frame = 0
+ 141              		@ frame_needed = 0, uses_anonymous_args = 0
+ 142              		@ link register save eliminated.
+ 143              		.loc 1 40 25 view .LVU19
+ 144 0000 7047     		bx	lr
+ 145              		.cfi_endproc
+ 146              	.LFE70:
+ 148              		.section	.text.DebugMon_Handler,"ax",%progbits
+ 149              		.align	1
+ 150              		.global	DebugMon_Handler
+ 151              		.syntax unified
+ 152              		.thumb
+ 153              		.thumb_func
+ 155              	DebugMon_Handler:
+ 156              	.LFB71:
+  41:Core/Src/stm32f1xx_it.c **** 
+  42:Core/Src/stm32f1xx_it.c **** void DebugMon_Handler(void) {}
+ 157              		.loc 1 42 29 view -0
+ 158              		.cfi_startproc
+ 159              		@ args = 0, pretend = 0, frame = 0
+ 160              		@ frame_needed = 0, uses_anonymous_args = 0
+ 161              		@ link register save eliminated.
+ 162              		.loc 1 42 30 view .LVU21
+ 163 0000 7047     		bx	lr
+ 164              		.cfi_endproc
+ 165              	.LFE71:
+ 167              		.section	.text.PendSV_Handler,"ax",%progbits
+ 168              		.align	1
+ 169              		.global	PendSV_Handler
+ 170              		.syntax unified
+ 171              		.thumb
+ 172              		.thumb_func
+ 174              	PendSV_Handler:
+ 175              	.LFB72:
+  43:Core/Src/stm32f1xx_it.c **** 
+  44:Core/Src/stm32f1xx_it.c **** void PendSV_Handler(void) {}
+ 176              		.loc 1 44 27 view -0
+ 177              		.cfi_startproc
+ 178              		@ args = 0, pretend = 0, frame = 0
+ 179              		@ frame_needed = 0, uses_anonymous_args = 0
+ 180              		@ link register save eliminated.
+ 181              		.loc 1 44 28 view .LVU23
+ 182 0000 7047     		bx	lr
+ 183              		.cfi_endproc
+ 184              	.LFE72:
+ 186              		.section	.text.SysTick_Handler,"ax",%progbits
+ 187              		.align	1
+ 188              		.global	SysTick_Handler
+ 189              		.syntax unified
+ 190              		.thumb
+ 191              		.thumb_func
+ 193              	SysTick_Handler:
+ 194              	.LFB73:
+  45:Core/Src/stm32f1xx_it.c **** 
+  46:Core/Src/stm32f1xx_it.c **** /**
+  47:Core/Src/stm32f1xx_it.c ****  * @brief  SysTick Handler — 1 kHz (1ms)
+ARM GAS  /tmp/ccIwjxv4.s 			page 5
+
+
+  48:Core/Src/stm32f1xx_it.c ****  *         Sets control_flag every 5 ticks (200 Hz = 5 ms)
+  49:Core/Src/stm32f1xx_it.c ****  */
+  50:Core/Src/stm32f1xx_it.c **** void SysTick_Handler(void) {
+ 195              		.loc 1 50 28 view -0
+ 196              		.cfi_startproc
+ 197              		@ args = 0, pretend = 0, frame = 0
+ 198              		@ frame_needed = 0, uses_anonymous_args = 0
+ 199 0000 08B5     		push	{r3, lr}
+ 200              	.LCFI0:
+ 201              		.cfi_def_cfa_offset 8
+ 202              		.cfi_offset 3, -8
+ 203              		.cfi_offset 14, -4
+  51:Core/Src/stm32f1xx_it.c ****   HAL_IncTick();
+ 204              		.loc 1 51 3 view .LVU25
+ 205 0002 FFF7FEFF 		bl	HAL_IncTick
+ 206              	.LVL0:
+  52:Core/Src/stm32f1xx_it.c ****   systick_ms++;
+ 207              		.loc 1 52 3 view .LVU26
+ 208              		.loc 1 52 13 is_stmt 0 view .LVU27
+ 209 0006 094A     		ldr	r2, .L16
+ 210 0008 1368     		ldr	r3, [r2]
+ 211 000a 0133     		adds	r3, r3, #1
+ 212 000c 1360     		str	r3, [r2]
+  53:Core/Src/stm32f1xx_it.c **** 
+  54:Core/Src/stm32f1xx_it.c ****   systick_divider++;
+ 213              		.loc 1 54 3 is_stmt 1 view .LVU28
+ 214              		.loc 1 54 18 is_stmt 0 view .LVU29
+ 215 000e 084A     		ldr	r2, .L16+4
+ 216 0010 1378     		ldrb	r3, [r2]	@ zero_extendqisi2
+ 217 0012 0133     		adds	r3, r3, #1
+ 218 0014 DBB2     		uxtb	r3, r3
+ 219 0016 1370     		strb	r3, [r2]
+  55:Core/Src/stm32f1xx_it.c ****   if (systick_divider >= (1000 / CONTROL_FREQ_HZ)) /* 5 ticks */
+ 220              		.loc 1 55 3 is_stmt 1 view .LVU30
+ 221              		.loc 1 55 23 is_stmt 0 view .LVU31
+ 222 0018 1378     		ldrb	r3, [r2]	@ zero_extendqisi2
+ 223              		.loc 1 55 6 view .LVU32
+ 224 001a 042B     		cmp	r3, #4
+ 225 001c 05D9     		bls	.L13
+  56:Core/Src/stm32f1xx_it.c ****   {
+  57:Core/Src/stm32f1xx_it.c ****     systick_divider = 0;
+ 226              		.loc 1 57 5 is_stmt 1 view .LVU33
+ 227              		.loc 1 57 21 is_stmt 0 view .LVU34
+ 228 001e 1346     		mov	r3, r2
+ 229 0020 0022     		movs	r2, #0
+ 230 0022 1A70     		strb	r2, [r3]
+  58:Core/Src/stm32f1xx_it.c ****     control_flag = 1;
+ 231              		.loc 1 58 5 is_stmt 1 view .LVU35
+ 232              		.loc 1 58 18 is_stmt 0 view .LVU36
+ 233 0024 034B     		ldr	r3, .L16+8
+ 234 0026 0122     		movs	r2, #1
+ 235 0028 1A70     		strb	r2, [r3]
+ 236              	.L13:
+  59:Core/Src/stm32f1xx_it.c ****   }
+  60:Core/Src/stm32f1xx_it.c **** }
+ 237              		.loc 1 60 1 view .LVU37
+ 238 002a 08BD     		pop	{r3, pc}
+ARM GAS  /tmp/ccIwjxv4.s 			page 6
+
+
+ 239              	.L17:
+ 240              		.align	2
+ 241              	.L16:
+ 242 002c 00000000 		.word	systick_ms
+ 243 0030 00000000 		.word	systick_divider
+ 244 0034 00000000 		.word	control_flag
+ 245              		.cfi_endproc
+ 246              	.LFE73:
+ 248              		.section	.text.USB_LP_CAN1_RX0_IRQHandler,"ax",%progbits
+ 249              		.align	1
+ 250              		.global	USB_LP_CAN1_RX0_IRQHandler
+ 251              		.syntax unified
+ 252              		.thumb
+ 253              		.thumb_func
+ 255              	USB_LP_CAN1_RX0_IRQHandler:
+ 256              	.LFB74:
+  61:Core/Src/stm32f1xx_it.c **** 
+  62:Core/Src/stm32f1xx_it.c **** /**
+  63:Core/Src/stm32f1xx_it.c ****  * @brief  USB Low Priority / CAN RX0 interrupt
+  64:Core/Src/stm32f1xx_it.c ****  */
+  65:Core/Src/stm32f1xx_it.c **** void USB_LP_CAN1_RX0_IRQHandler(void) { HAL_PCD_IRQHandler(&hpcd_USB_FS); }
+ 257              		.loc 1 65 39 is_stmt 1 view -0
+ 258              		.cfi_startproc
+ 259              		@ args = 0, pretend = 0, frame = 0
+ 260              		@ frame_needed = 0, uses_anonymous_args = 0
+ 261 0000 08B5     		push	{r3, lr}
+ 262              	.LCFI1:
+ 263              		.cfi_def_cfa_offset 8
+ 264              		.cfi_offset 3, -8
+ 265              		.cfi_offset 14, -4
+ 266              		.loc 1 65 41 view .LVU39
+ 267 0002 0248     		ldr	r0, .L20
+ 268 0004 FFF7FEFF 		bl	HAL_PCD_IRQHandler
+ 269              	.LVL1:
+ 270              		.loc 1 65 75 is_stmt 0 view .LVU40
+ 271 0008 08BD     		pop	{r3, pc}
+ 272              	.L21:
+ 273 000a 00BF     		.align	2
+ 274              	.L20:
+ 275 000c 00000000 		.word	hpcd_USB_FS
+ 276              		.cfi_endproc
+ 277              	.LFE74:
+ 279              		.section	.bss.systick_divider,"aw",%nobits
+ 282              	systick_divider:
+ 283 0000 00       		.space	1
+ 284              		.global	systick_ms
+ 285              		.section	.bss.systick_ms,"aw",%nobits
+ 286              		.align	2
+ 289              	systick_ms:
+ 290 0000 00000000 		.space	4
+ 291              		.global	control_flag
+ 292              		.section	.bss.control_flag,"aw",%nobits
+ 295              	control_flag:
+ 296 0000 00       		.space	1
+ 297              		.text
+ 298              	.Letext0:
+ 299              		.file 2 "/usr/arm-none-eabi/include/machine/_default_types.h"
+ARM GAS  /tmp/ccIwjxv4.s 			page 7
+
+
+ 300              		.file 3 "/usr/arm-none-eabi/include/sys/_stdint.h"
+ 301              		.file 4 "Drivers/CMSIS/Device/ST/STM32F1xx/Include/stm32f103xb.h"
+ 302              		.file 5 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_def.h"
+ 303              		.file 6 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_ll_usb.h"
+ 304              		.file 7 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pcd.h"
+ 305              		.file 8 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h"
+ARM GAS  /tmp/ccIwjxv4.s 			page 8
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 stm32f1xx_it.c
+     /tmp/ccIwjxv4.s:19     .text.NMI_Handler:00000000 $t
+     /tmp/ccIwjxv4.s:25     .text.NMI_Handler:00000000 NMI_Handler
+     /tmp/ccIwjxv4.s:38     .text.HardFault_Handler:00000000 $t
+     /tmp/ccIwjxv4.s:44     .text.HardFault_Handler:00000000 HardFault_Handler
+     /tmp/ccIwjxv4.s:61     .text.MemManage_Handler:00000000 $t
+     /tmp/ccIwjxv4.s:67     .text.MemManage_Handler:00000000 MemManage_Handler
+     /tmp/ccIwjxv4.s:84     .text.BusFault_Handler:00000000 $t
+     /tmp/ccIwjxv4.s:90     .text.BusFault_Handler:00000000 BusFault_Handler
+     /tmp/ccIwjxv4.s:107    .text.UsageFault_Handler:00000000 $t
+     /tmp/ccIwjxv4.s:113    .text.UsageFault_Handler:00000000 UsageFault_Handler
+     /tmp/ccIwjxv4.s:130    .text.SVC_Handler:00000000 $t
+     /tmp/ccIwjxv4.s:136    .text.SVC_Handler:00000000 SVC_Handler
+     /tmp/ccIwjxv4.s:149    .text.DebugMon_Handler:00000000 $t
+     /tmp/ccIwjxv4.s:155    .text.DebugMon_Handler:00000000 DebugMon_Handler
+     /tmp/ccIwjxv4.s:168    .text.PendSV_Handler:00000000 $t
+     /tmp/ccIwjxv4.s:174    .text.PendSV_Handler:00000000 PendSV_Handler
+     /tmp/ccIwjxv4.s:187    .text.SysTick_Handler:00000000 $t
+     /tmp/ccIwjxv4.s:193    .text.SysTick_Handler:00000000 SysTick_Handler
+     /tmp/ccIwjxv4.s:242    .text.SysTick_Handler:0000002c $d
+     /tmp/ccIwjxv4.s:289    .bss.systick_ms:00000000 systick_ms
+     /tmp/ccIwjxv4.s:282    .bss.systick_divider:00000000 systick_divider
+     /tmp/ccIwjxv4.s:295    .bss.control_flag:00000000 control_flag
+     /tmp/ccIwjxv4.s:249    .text.USB_LP_CAN1_RX0_IRQHandler:00000000 $t
+     /tmp/ccIwjxv4.s:255    .text.USB_LP_CAN1_RX0_IRQHandler:00000000 USB_LP_CAN1_RX0_IRQHandler
+     /tmp/ccIwjxv4.s:275    .text.USB_LP_CAN1_RX0_IRQHandler:0000000c $d
+     /tmp/ccIwjxv4.s:283    .bss.systick_divider:00000000 $d
+     /tmp/ccIwjxv4.s:286    .bss.systick_ms:00000000 $d
+     /tmp/ccIwjxv4.s:296    .bss.control_flag:00000000 $d
+
+UNDEFINED SYMBOLS
+HAL_IncTick
+HAL_PCD_IRQHandler
+hpcd_USB_FS
